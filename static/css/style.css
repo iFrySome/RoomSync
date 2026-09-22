@@ -1,0 +1,543 @@
+:root {
+    --bg: #f7f4f4;
+    --panel: #ffffff;
+    --panel-light: #f3e8ea;
+    --border: #e8cfd4;
+    --text: #1f1214;
+    --muted: #7a4a52;
+    --accent: #c8102e;
+    --accent-dark: #9b0c24;
+    --accent-soft: #fce8ec;
+    --green: #15803d;
+    --yellow: #b45309;
+    --red: #c8102e;
+    --radius: 10px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI", Roboto, Arial, sans-serif;
+}
+
+.navbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 24px;
+    background: var(--accent);
+    border-bottom: 3px solid var(--accent-dark);
+}
+
+.navbar-brand {
+    font-weight: 700;
+    font-size: 1.3rem;
+    color: #ffffff;
+}
+
+.navbar-links a {
+    color: #ffffff;
+    text-decoration: none;
+    margin-left: 20px;
+    font-size: 0.95rem;
+}
+
+.navbar-links a:hover { color: var(--accent-soft); }
+
+.container {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 24px;
+}
+
+.clock {
+    text-align: center;
+    font-size: 1.1rem;
+    color: var(--muted);
+    margin-bottom: 16px;
+}
+
+.card {
+    background: var(--panel);
+    border-radius: var(--radius);
+    padding: 24px;
+    margin-bottom: 20px;
+    position: relative;
+    border: 1px solid var(--border);
+    box-shadow: 0 2px 8px rgba(200, 16, 46, 0.06);
+}
+
+.card.small { padding: 12px 20px; margin-bottom: 16px; }
+
+.card h1 { margin: 6px 0 4px; font-size: 2rem; }
+
+.card .meta { color: var(--muted); margin: 2px 0; }
+
+.badge.live {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    background: var(--red);
+    color: white;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+}
+
+.attendance-count { margin-top: 12px; font-size: 1.2rem; }
+
+.roster-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--panel);
+    border-radius: var(--radius);
+    overflow: hidden;
+    border: 1px solid var(--border);
+}
+
+.roster-table th, .roster-table td {
+    padding: 10px 14px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+}
+
+.roster-table th {
+    background: var(--accent);
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #ffffff;
+}
+
+.roster-table tbody tr:hover {
+    background: var(--accent-soft);
+}
+
+.pill {
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 700;
+}
+
+.pill-present { background: rgba(21, 128, 61, 0.12); color: var(--green); }
+.pill-late { background: rgba(180, 83, 9, 0.12); color: var(--yellow); }
+.pill-absent { background: var(--accent-soft); color: var(--red); }
+
+.flash {
+    padding: 12px 16px;
+    border-radius: var(--radius);
+    margin-bottom: 16px;
+    font-weight: 600;
+}
+
+.flash-success { background: rgba(21, 128, 61, 0.12); color: var(--green); }
+.flash-error { background: var(--accent-soft); color: var(--red); }
+.flash-warning { background: rgba(180, 83, 9, 0.12); color: var(--yellow); }
+.flash-info { background: var(--accent-soft); color: var(--accent); }
+
+.tap-form {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 24px;
+}
+
+.tap-form input {
+    flex: 1;
+    padding: 12px 14px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+    font-size: 1rem;
+}
+
+.tap-form input:focus {
+    outline: 2px solid var(--accent);
+    border-color: var(--accent);
+}
+
+.tap-form button, .quick-tap button, .class-picker select {
+    padding: 12px 18px;
+    border-radius: var(--radius);
+    border: none;
+    background: var(--accent);
+    color: #ffffff;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.tap-form button:hover, .quick-tap button:hover { background: var(--accent-dark); }
+
+.button-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 12px;
+}
+
+.quick-tap button {
+    width: 100%;
+    background: var(--panel);
+    color: var(--text);
+    text-align: center;
+    border: 1px solid var(--border);
+}
+
+.quick-tap button:hover {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+}
+
+.quick-tap button small { color: var(--muted); }
+
+.class-picker {
+    margin-bottom: 20px;
+}
+
+.class-picker select {
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--border);
+}
+
+.summary-stats {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 20px;
+}
+
+.stat {
+    flex: 1;
+    background: var(--panel);
+    border-radius: var(--radius);
+    padding: 16px;
+    text-align: center;
+    font-weight: 600;
+    color: var(--muted);
+    border: 1px solid var(--border);
+}
+
+.stat span {
+    display: block;
+    font-size: 2rem;
+    margin-top: 6px;
+}
+
+.stat-present span { color: var(--green); }
+.stat-late span { color: var(--yellow); }
+.stat-absent span { color: var(--red); }
+
+.quick-tap.teacher button {
+    background: var(--accent);
+    color: #ffffff;
+    border-color: var(--accent);
+}
+
+.quick-tap.teacher button small { color: rgba(255, 255, 255, 0.85); }
+
+.quick-tap.teacher button:hover {
+    background: var(--accent-dark);
+    border-color: var(--accent-dark);
+}
+
+/* --- Main display state machine --- */
+
+.display-root {
+    min-height: 60vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+}
+
+.stage-welcome h1 {
+    font-size: 5rem;
+    letter-spacing: 0.1em;
+    margin: 0;
+    color: var(--accent);
+}
+
+.stage-welcome p { color: var(--muted); font-size: 1.3rem; margin-top: 12px; }
+
+.stage-flash {
+    font-size: 2.2rem;
+    font-weight: 700;
+    padding: 40px;
+    border-radius: var(--radius);
+    max-width: 90%;
+}
+
+.stage-flash.flash-success { background: rgba(21, 128, 61, 0.12); color: var(--green); }
+.stage-flash.flash-error { background: var(--accent-soft); color: var(--red); }
+.stage-flash.flash-warning { background: rgba(180, 83, 9, 0.12); color: var(--yellow); }
+.stage-flash.flash-info { background: var(--accent-soft); color: var(--accent); }
+
+.stage-confirm .confirm-question {
+    font-size: 1.8rem;
+    max-width: 700px;
+    margin: 0 auto 28px;
+}
+
+.confirm-buttons { display: flex; gap: 24px; justify-content: center; }
+
+.confirm-buttons button {
+    font-size: 1.4rem;
+    font-weight: 700;
+    padding: 18px 48px;
+    border-radius: var(--radius);
+    border: none;
+    cursor: pointer;
+}
+
+.btn-yes { background: var(--green); color: #ffffff; }
+.btn-no { background: var(--red); color: #ffffff; }
+.btn-cancel { background: var(--yellow); color: #ffffff; }
+
+.stage-wait h2 { font-size: 2.4rem; margin-bottom: 12px; color: var(--accent); }
+.stage-wait p { font-size: 1.6rem; color: var(--muted); }
+.stage-wait strong { color: var(--accent); }
+
+.stage-open h2 { font-size: 2.2rem; margin: 0 0 8px; color: var(--accent); }
+.stage-open .class-name { font-size: 1.4rem; color: var(--muted); margin: 0 0 20px; }
+.stage-open .countdown {
+    font-size: 5rem;
+    font-weight: 700;
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+}
+.stage-open .hint { color: var(--muted); margin-top: 16px; }
+
+.roster-boxes {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 18px;
+    max-width: 560px;
+}
+.roster-box {
+    width: 36px;
+    height: 36px;
+    border-radius: 6px;
+    background: var(--accent-soft);
+    border: 2px solid var(--red);
+    transition: background 0.3s, border-color 0.3s;
+}
+.roster-box.present { background: var(--green); border-color: var(--green); }
+.roster-box.absent { background: var(--accent-soft); border-color: var(--red); }
+
+.stage-ongoing h1 { font-size: 3.6rem; color: var(--accent); margin-bottom: 12px; }
+.stage-ongoing .class-name { font-size: 1.5rem; color: var(--muted); margin-bottom: 16px; }
+.stage-ongoing .hint { font-size: 1rem; color: var(--muted); opacity: 0.75; }
+
+.stage-summary { max-width: 640px; }
+.stage-summary h2 { font-size: 2rem; color: var(--accent); margin: 0 0 18px; }
+.stage-summary .summary-line { font-size: 1.15rem; color: var(--muted); margin: 6px 0; text-align: left; }
+.stage-summary .summary-line strong { color: var(--text); }
+.stage-summary .confirm-question { font-size: 1.4rem; margin: 22px 0 20px; }
+.stage-summary .hint { color: var(--muted); font-size: 0.95rem; margin-top: 18px; }
+
+.roster-toggle-grid {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 10px;
+    margin: 8px 0 24px;
+}
+.roster-toggle {
+    padding: 12px 18px;
+    border-radius: var(--radius);
+    border: 2px solid var(--red);
+    background: var(--accent-soft);
+    color: var(--text);
+    font-weight: 600;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s, color 0.2s;
+}
+.roster-toggle.present { background: var(--green); border-color: var(--green); color: #ffffff; }
+
+/* --- Login page --- */
+
+.login-card { max-width: 400px; margin: 40px auto; }
+
+.login-tabs {
+    display: flex;
+    gap: 8px;
+    margin: 16px 0 20px;
+    border-bottom: 1px solid var(--border);
+}
+
+.login-tab {
+    flex: 1;
+    padding: 10px 14px;
+    border: none;
+    background: none;
+    color: var(--muted);
+    font-weight: 700;
+    cursor: pointer;
+    border-bottom: 3px solid transparent;
+}
+
+.login-tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+}
+
+.login-form {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.login-form label {
+    color: var(--muted);
+    font-size: 0.85rem;
+    margin-top: 8px;
+}
+
+.login-form input {
+    padding: 10px 12px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 1rem;
+}
+
+.login-form button {
+    margin-top: 18px;
+    padding: 12px 18px;
+    border-radius: var(--radius);
+    border: none;
+    background: var(--accent);
+    color: #ffffff;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.login-form button:hover { background: var(--accent-dark); }
+
+/* --- Teacher dashboard --- */
+
+.session-card { position: relative; }
+.session-card h3 { margin: 4px 0 2px; }
+
+.session-status-completed { position: absolute; top: 16px; right: 16px; background: rgba(21, 128, 61, 0.12); color: var(--green); }
+.session-status-in-progress { position: absolute; top: 16px; right: 16px; background: var(--accent-soft); color: var(--accent); }
+.session-status-not-started { position: absolute; top: 16px; right: 16px; background: var(--panel-light); color: var(--muted); }
+
+/* --- Admin page --- */
+
+.admin-section {
+    background: var(--panel);
+    border-radius: var(--radius);
+    padding: 20px 24px;
+    margin-bottom: 28px;
+}
+
+.admin-section h2 { margin-top: 0; }
+.admin-section h3 { color: var(--muted); font-size: 1rem; text-transform: uppercase; letter-spacing: 0.04em; margin: 20px 0 10px; }
+
+.admin-table input, .admin-table select {
+    width: 100%;
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--panel-light);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 0.9rem;
+}
+
+.admin-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+.rfid-register-status {
+    flex-basis: 100%;
+    font-size: 0.75rem;
+    color: var(--muted);
+}
+.rfid-register-status.rfid-register-success { color: var(--green); }
+.rfid-register-status.rfid-register-error { color: var(--red); }
+
+.btn-save, .btn-delete {
+    padding: 8px 14px;
+    border-radius: 6px;
+    border: none;
+    font-weight: 700;
+    cursor: pointer;
+    font-size: 0.85rem;
+}
+
+.btn-save { background: var(--green); color: #0f172a; }
+.btn-delete { background: var(--red); color: #0f172a; }
+.btn-view {
+    display: inline-block;
+    padding: 8px 14px;
+    border-radius: 6px;
+    background: var(--accent);
+    color: #0f172a;
+    font-weight: 700;
+    font-size: 0.85rem;
+    text-decoration: none;
+}
+
+.inline-form { display: inline; }
+
+.reset-password-form { display: flex; gap: 8px; padding: 6px 0; }
+.reset-password-form input { flex: 1; max-width: 260px; }
+
+.admin-add-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+}
+
+.admin-add-form input, .admin-add-form select {
+    padding: 10px 12px;
+    border-radius: var(--radius);
+    border: 1px solid var(--panel-light);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 0.9rem;
+    flex: 1;
+    min-width: 140px;
+}
+
+.class-card { background: var(--panel-light); }
+
+.class-card-header {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.class-card-header input, .class-card-header select {
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--panel-light);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 0.9rem;
+}
+
+.class-subject-input { flex: 2; min-width: 200px; font-weight: 700; }
+
+.class-card h3 { color: var(--muted); font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.04em; margin: 16px 0 8px; }
+
+.admin-add-form button {
+    padding: 10px 18px;
+    border-radius: var(--radius);
+    border: none;
+    background: var(--accent);
+    color: #0f172a;
+    font-weight: 700;
+    cursor: pointer;
+}

@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}RoomSync - Login{% endblock %}
+
+{% block content %}
+<div class="card login-card">
+    <h1>Login</h1>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for category, message in messages %}
+        <div class="flash flash-{{ category }}">{{ message }}</div>
+        {% endfor %}
+    {% endwith %}
+
+    <div class="login-tabs">
+        <button type="button" id="tab-teacher" class="login-tab {{ 'active' if active_role == 'teacher' else '' }}">Teacher Login</button>
+        <button type="button" id="tab-student" class="login-tab {{ 'active' if active_role == 'student' else '' }}">Student Login</button>
+        <button type="button" id="tab-admin" class="login-tab {{ 'active' if active_role == 'admin' else '' }}">Admin Login</button>
+    </div>
+
+    <form method="POST" action="{{ url_for('login') }}" class="login-form">
+        <input type="hidden" name="role" id="role-input" value="{{ active_role }}">
+        <label for="username">Username</label>
+        <input type="text" id="username" name="username" required autofocus>
+        <label for="password">Password</label>
+        <input type="password" id="password" name="password" required>
+        <button type="submit" id="login-submit">Log in as {{ {'admin': 'Admin', 'student': 'Student'}.get(active_role, 'Teacher') }}</button>
+    </form>
+</div>
+
+<script>
+    const roleInput = document.getElementById("role-input");
+    const submitBtn = document.getElementById("login-submit");
+    const tabTeacher = document.getElementById("tab-teacher");
+    const tabStudent = document.getElementById("tab-student");
+    const tabAdmin = document.getElementById("tab-admin");
+
+    const ROLE_LABELS = { admin: "Admin", student: "Student", teacher: "Teacher" };
+
+    function setRole(role) {
+        roleInput.value = role;
+        tabTeacher.classList.toggle("active", role === "teacher");
+        tabStudent.classList.toggle("active", role === "student");
+        tabAdmin.classList.toggle("active", role === "admin");
+        submitBtn.textContent = `Log in as ${ROLE_LABELS[role]}`;
+    }
+
+    tabTeacher.onclick = () => setRole("teacher");
+    tabStudent.onclick = () => setRole("student");
+    tabAdmin.onclick = () => setRole("admin");
+</script>
+{% endblock %}

@@ -1,0 +1,50 @@
+<script>
+    // Requests notification permission and registers a push subscription
+    // with the backend, once, the first time this page loads without an
+    // existing subscription. Shared by dashboard.html (teacher) and
+    // student_dashboard.html — nothing here is role-specific, since
+    // /api/push_subscribe identifies the user from their own session.
+    // Silently does nothing if push isn't supported (e.g. plain
+    // http://localhost instead of https:// — browsers require a secure
+    // context for both serviceWorker and PushManager) or permission is
+    // denied.
+    const VAPID_PUBLIC_KEY = "{{ vapid_public_key }}";
+
+    function urlBase64ToUint8Array(base64String) {
+        const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+        const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+        const rawData = window.atob(base64);
+        const outputArray = new Uint8Array(rawData.length);
+        for (let i = 0; i < rawData.length; ++i) {
+            outputArray[i] = rawData.charCodeAt(i);
+        }
+        return outputArray;
+    }
+
+    async function setupPushNotifications() {
+        if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
+        try {
+            const registration = await navigator.serviceWorker.register("/static/sw.js");
+            const existing = await registration.pushManager.getSubscription();
+            if (existing) return;
+
+            const permission = await Notification.requestPermission();
+            if (permission !== "granted") return;
+
+            const subscription = await registration.pushManager.subscribe({
+                userVisibleOnly: true,
+                applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+            });
+
+            await fetch("/api/push_subscribe", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(subscription.toJSON()),
+            });
+        } catch (err) {
+            // Push unsupported, permission denied, not HTTPS, etc. — fail silently.
+        }
+    }
+
+    setupPushNotifications();
+</script>

@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+.idea/
+
+# Machine-specific — each machine (laptop, Pi) keeps its own real values
+# here (SMS_GATEWAY_IP/PORT, ROOMSYNC_SERVER_URL). Never tracked, so a
+# git pull never overwrites one machine's settings with another's. Copy
+# config.py.example to config.py once per machine and fill in real values.
+config.py
+
+# Regenerated per machine via `python database.py` — never synced between
+# machines, since a git pull on the Pi should never overwrite its live
+# attendance data with whatever demo data is on the laptop, or vice versa.
+roomsync.db

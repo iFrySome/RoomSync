@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}RoomSync - My Dashboard{% endblock %}
+
+{% block content %}
+<h1>Welcome, {{ teacher.first_name }} {{ teacher.last_name }}</h1>
+<p class="meta">Date: {{ today }}</p>
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+    <div class="flash flash-{{ category }}">{{ message }}</div>
+    {% endfor %}
+{% endwith %}
+
+<!-- ========================= TODAY'S SESSIONS ========================= -->
+<section class="admin-section">
+    <h2>Today's Sessions</h2>
+    {% for s in today_sessions %}
+    <div class="card small session-card">
+        <span class="pill session-status-{{ s.status|lower|replace(' ', '-') }}">{{ s.status }}</span>
+        <h3>{{ s.subject_name }}</h3>
+        <p class="meta">{{ s.start_time }}&ndash;{{ s.end_time }} &middot; Room {{ s.room_number }}</p>
+        <div class="summary-stats">
+            <div class="stat stat-present">Present<span>{{ s.present_count }}</span></div>
+            <div class="stat stat-late">Late<span>{{ s.late_count }}</span></div>
+            <div class="stat stat-absent">Absent<span>{{ s.absent_count }}</span></div>
+        </div>
+    </div>
+    {% else %}
+    <p class="meta">No classes scheduled for today.</p>
+    {% endfor %}
+</section>
+
+<!-- ======================== ATTENDANCE HISTORY ======================== -->
+<section class="admin-section">
+    <h2>Attendance History</h2>
+    <form method="GET" action="{{ url_for('dashboard') }}" class="admin-add-form">
+        <select name="class_id" onchange="this.form.submit()">
+            <option value="" {% if not filter_class_id %}selected{% endif %}>Select a class&hellip;</option>
+            {% for c in all_classes %}
+            <option value="{{ c.class_id }}" {% if c.class_id == filter_class_id %}selected{% endif %}>
+                {{ c.subject_name }} ({{ (c.start_time ~ "-" ~ c.end_time) if (c.start_time and c.end_time) else "time not set" }})
+            </option>
+            {% endfor %}
+        </select>
+        <input type="date" name="date" value="{{ filter_date }}" onchange="this.form.submit()">
+        {% if filter_class_id %}
+        <a href="{{ url_for('dashboard', class_id=filter_class_id) }}" class="btn-view">Clear Date</a>
+        {% endif %}
+    </form>
+
+    {% if history_roster is not none %}
+        <div class="summary-stats" style="margin-top: 20px;">
+            <div class="stat stat-present">Present<span>{{ history_counts.present }}</span></div>
+            <div class="stat stat-late">Late<span>{{ history_counts.late }}</span></div>
+            <div class="stat stat-absent">Absent<span>{{ history_counts.absent }}</span></div>
+        </div>
+        <table class="roster-table">
+            <thead>
+                <tr><th>Name</th><th>Section</th><th>Status</th><th>Time Tapped</th></tr>
+            </thead>
+            <tbody>
+                {% for r in history_roster %}
+                <tr>
+                    <td>{{ r.first_name }} {{ r.last_name }}</td>
+                    <td>{{ r.section }}</td>
+                    <td><span class="pill pill-{{ r.status }}">{{ r.status|upper }}</span></td>
+                    <td>{{ r.time_tapped or "-" }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% elif history_dates %}
+        <table class="roster-table" style="margin-top: 20px;">
+            <thead>
+                <tr><th>Date</th><th>Present</th><th>Late</th><th>Absent</th><th></th></tr>
+            </thead>
+            <tbody>
+                {% for d in history_dates %}
+                <tr>
+                    <td>{{ d.date }}</td>
+                    <td>{{ d.present_count }}</td>
+                    <td>{{ d.late_count }}</td>
+                    <td>{{ d.absent_count }}</td>
+                    <td><a href="{{ url_for('dashboard', class_id=filter_class_id, date=d.date) }}" class="btn-view">View</a></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% elif filter_class_id %}
+        <p class="meta" style="margin-top: 16px;">No sessions recorded yet for this class.</p>
+    {% else %}
+        <p class="meta" style="margin-top: 16px;">Select a class above to see its past sessions.</p>
+    {% endif %}
+</section>
+
+{% include "_push_notifications.html" %}
+{% endblock %}

@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}RoomSync - My Dashboard{% endblock %}
+
+{% block content %}
+<h1>Welcome, {{ student.first_name }} {{ student.last_name }}</h1>
+<p class="meta">Section: {{ student.section }}</p>
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+    <div class="flash flash-{{ category }}">{{ message }}</div>
+    {% endfor %}
+{% endwith %}
+
+<!-- ============================ MY CLASSES ============================ -->
+<section class="admin-section">
+    <h2>My Classes</h2>
+    {% for e in enrollments %}
+    <div class="card small session-card">
+        <h3>{{ e.subject_name }}</h3>
+        <p class="meta">
+            {{ e.teacher_name or "Unassigned" }} &middot;
+            {% if e.start_time and e.end_time %}
+                {{ e.start_time }}&ndash;{{ e.end_time }} &middot; Room {{ e.room_number or "—" }}
+            {% else %}
+                Not scheduled yet
+            {% endif %}
+        </p>
+    </div>
+    {% else %}
+    <p class="meta">You're not enrolled in any classes yet.</p>
+    {% endfor %}
+</section>
+
+<!-- ======================== ATTENDANCE HISTORY ======================== -->
+<section class="admin-section">
+    <h2>My Attendance History</h2>
+    <form method="GET" action="{{ url_for('student_dashboard') }}" class="admin-add-form">
+        <select name="class_id" onchange="this.form.submit()">
+            <option value="" {% if not filter_class_id %}selected{% endif %}>Select a class&hellip;</option>
+            {% for e in enrollments %}
+            <option value="{{ e.class_id }}" {% if e.class_id == filter_class_id %}selected{% endif %}>
+                {{ e.subject_name }} ({{ (e.start_time ~ "-" ~ e.end_time) if (e.start_time and e.end_time) else "time not set" }})
+            </option>
+            {% endfor %}
+        </select>
+        <input type="date" name="date" value="{{ filter_date }}" onchange="this.form.submit()">
+        {% if filter_class_id %}
+        <a href="{{ url_for('student_dashboard', class_id=filter_class_id) }}" class="btn-view">Clear Date</a>
+        {% endif %}
+    </form>
+
+    {% if filter_class_id and filter_date %}
+        {% if history_entry %}
+        <table class="roster-table" style="margin-top: 20px;">
+            <thead>
+                <tr><th>Date</th><th>Status</th><th>Time Tapped</th></tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>{{ history_entry.date }}</td>
+                    <td><span class="pill pill-{{ history_entry.status }}">{{ history_entry.status|upper }}</span></td>
+                    <td>{{ history_entry.time_tapped or "-" }}</td>
+                </tr>
+            </tbody>
+        </table>
+        {% else %}
+        <p class="meta" style="margin-top: 16px;">No attendance record for that date — you were absent, or the class didn't meet.</p>
+        {% endif %}
+    {% elif history_rows %}
+        <table class="roster-table" style="margin-top: 20px;">
+            <thead>
+                <tr><th>Date</th><th>Status</th><th>Time Tapped</th></tr>
+            </thead>
+            <tbody>
+                {% for r in history_rows %}
+                <tr>
+                    <td>{{ r.date }}</td>
+                    <td><span class="pill pill-{{ r.status }}">{{ r.status|upper }}</span></td>
+                    <td>{{ r.time_tapped or "-" }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% elif filter_class_id %}
+        <p class="meta" style="margin-top: 16px;">No attendance recorded yet for this class.</p>
+    {% else %}
+        <p class="meta" style="margin-top: 16px;">Select a class above to see your attendance history.</p>
+    {% endif %}
+</section>
+
+{% include "_push_notifications.html" %}
+{% endblock %}

@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}RoomSync - {{ teacher.first_name }} {{ teacher.last_name }}{% endblock %}
+
+{% block content %}
+<p class="meta"><a href="{{ url_for('admin') }}">&larr; Back to Admin</a></p>
+<h1>{{ teacher.first_name }} {{ teacher.last_name }}</h1>
+<p class="meta">RFID Tag: {{ teacher.rfid_tag }}</p>
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+    <div class="flash flash-{{ category }}">{{ message }}</div>
+    {% endfor %}
+{% endwith %}
+
+<h2>Classes</h2>
+<p class="meta">
+    Adjust the room, start/end time, and attendance window for a class
+    already assigned to {{ teacher.first_name }} here. Once a class has a
+    room and start/end time, it meets every single day at that time —
+    there's no per-day schedule to arrange. Adding a brand new class, or
+    assigning one of {{ teacher.first_name }}'s classes to a different
+    teacher, is done from the Classes section on the main Admin page.
+</p>
+
+{% for c in classes %}
+<section class="admin-section class-card">
+    <div class="class-card-header">
+        <span class="class-subject-input">{{ c.subject_name }}</span>
+        <select form="class-form-{{ c.class_id }}" name="room_number">
+            <option value="" {% if not c.room_number %}selected{% endif %}>No room yet</option>
+            {% for r in rooms %}
+            <option value="{{ r.room_name }}" {% if r.room_name == c.room_number %}selected{% endif %}>{{ r.room_name }}</option>
+            {% endfor %}
+        </select>
+        <input form="class-form-{{ c.class_id }}" type="time" name="start_time" value="{{ c.start_time or '' }}">
+        <input form="class-form-{{ c.class_id }}" type="time" name="end_time" value="{{ c.end_time or '' }}">
+        <input form="class-form-{{ c.class_id }}" type="number" min="1" name="attendance_window_minutes" value="{{ c.attendance_window_minutes }}" title="Attendance window (minutes)">
+        <button form="class-form-{{ c.class_id }}" type="submit" class="btn-save">Save</button>
+        <form method="POST" action="{{ url_for('admin_delete_class', class_id=c.class_id) }}" class="inline-form"
+              onsubmit="return confirm('Delete this class? This also removes its attendance records and enrollments.');">
+            <input type="hidden" name="teacher_context" value="{{ teacher.teacher_id }}">
+            <button type="submit" class="btn-delete">Delete Class</button>
+        </form>
+    </div>
+    {% if not c.start_time or not c.end_time %}
+    <p class="meta">Not tappable yet — set a start and end time above to make it active every day.</p>
+    {% endif %}
+    <form id="class-form-{{ c.class_id }}" method="POST" action="{{ url_for('admin_assign_class') }}">
+        <input type="hidden" name="class_id" value="{{ c.class_id }}">
+        <input type="hidden" name="teacher_id" value="{{ teacher.teacher_id }}">
+        <input type="hidden" name="teacher_context" value="{{ teacher.teacher_id }}">
+    </form>
+</section>
+{% else %}
+<p class="meta">
+    {{ teacher.first_name }} {{ teacher.last_name }} has no classes yet.
+    Assign one to them from the Classes section on the
+    <a href="{{ url_for('admin') }}">main Admin page</a>.
+</p>
+{% endfor %}
+{% endblock %}

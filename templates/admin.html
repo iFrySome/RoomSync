@@ -1,0 +1,336 @@
+{% extends "base.html" %}
+{% block title %}RoomSync - Administrator{% endblock %}
+
+{% block content %}
+<h1>Administrator</h1>
+<p class="meta">
+
+</p>
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+    <div class="flash flash-{{ category }}">{{ message }}</div>
+    {% endfor %}
+{% endwith %}
+
+<!-- ============================ TEACHERS ============================ -->
+<section class="admin-section">
+    <h2>Teachers</h2>
+    <table class="roster-table admin-table">
+        <thead>
+            <tr><th>RFID Tag</th><th>First Name</th><th>Last Name</th><th>Username</th><th>Phone</th><th></th></tr>
+        </thead>
+        <tbody>
+            {% for t in teachers %}
+            <tr>
+                <td><input id="rfid-input-teacher-{{ t.teacher_id }}" form="teacher-form-{{ t.teacher_id }}" name="rfid_tag" value="{{ t.rfid_tag }}" required></td>
+                <td><input form="teacher-form-{{ t.teacher_id }}" name="first_name" value="{{ t.first_name }}" required></td>
+                <td><input form="teacher-form-{{ t.teacher_id }}" name="last_name" value="{{ t.last_name }}" required></td>
+                <td>{{ t.username or "—" }}</td>
+                <td><input form="teacher-form-{{ t.teacher_id }}" name="phone_number" value="{{ t.phone_number or '' }}" placeholder="e.g. 09171234567"></td>
+                <td class="admin-actions">
+                    <a href="{{ url_for('admin_teacher_detail', teacher_id=t.teacher_id) }}" class="btn-view">Classes</a>
+                    <button form="teacher-form-{{ t.teacher_id }}" type="submit" class="btn-save">Save</button>
+                    <button type="button" class="btn-view rfid-register-btn" data-user-type="teacher" data-user-id="{{ t.teacher_id }}">Register RFID</button>
+                    <form method="POST" action="{{ url_for('admin_delete_teacher', teacher_id=t.teacher_id) }}"
+                          class="inline-form" onsubmit="return confirm('Delete this teacher?');">
+                        <button type="submit" class="btn-delete">Delete</button>
+                    </form>
+                    <span id="rfid-status-teacher-{{ t.teacher_id }}" class="rfid-register-status"></span>
+                </td>
+            </tr>
+            <tr>
+                <td colspan="6">
+                    <form method="POST" action="{{ url_for('admin_reset_teacher_password', teacher_id=t.teacher_id) }}"
+                          class="inline-form reset-password-form">
+                        <input type="password" name="new_password" placeholder="New password for {{ t.username or t.first_name }}" required>
+                        <button type="submit" class="btn-save">Reset Password</button>
+                    </form>
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6">No teachers yet.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% for t in teachers %}
+    <form id="teacher-form-{{ t.teacher_id }}" method="POST" action="{{ url_for('admin_update_teacher', teacher_id=t.teacher_id) }}"></form>
+    {% endfor %}
+
+    <h3>Add Teacher</h3>
+    <form method="POST" action="{{ url_for('admin_add_teacher') }}" class="admin-add-form">
+        <input name="rfid_tag" placeholder="RFID Tag (e.g. T-1004)" required>
+        <input name="first_name" placeholder="First Name" required>
+        <input name="last_name" placeholder="Last Name" required>
+        <input name="username" placeholder="Login Username" required>
+        <input type="password" name="password" placeholder="Login Password" required>
+        <input name="phone_number" placeholder="Phone Number (optional, for SMS)">
+        <button type="submit">Add Teacher</button>
+    </form>
+</section>
+
+<!-- ============================ STUDENTS ============================ -->
+<section class="admin-section">
+    <h2>Students</h2>
+    <table class="roster-table admin-table">
+        <thead>
+            <tr><th>RFID Tag</th><th>First Name</th><th>Last Name</th><th>Section</th><th>Username</th><th>Phone</th><th></th></tr>
+        </thead>
+        <tbody>
+            {% for s in students %}
+            <tr>
+                <td><input id="rfid-input-student-{{ s.student_id }}" form="student-form-{{ s.student_id }}" name="rfid_tag" value="{{ s.rfid_tag }}" required></td>
+                <td><input form="student-form-{{ s.student_id }}" name="first_name" value="{{ s.first_name }}" required></td>
+                <td><input form="student-form-{{ s.student_id }}" name="last_name" value="{{ s.last_name }}" required></td>
+                <td><input form="student-form-{{ s.student_id }}" name="section" value="{{ s.section }}" required></td>
+                <td>{{ s.username or "—" }}</td>
+                <td><input form="student-form-{{ s.student_id }}" name="phone_number" value="{{ s.phone_number or '' }}" placeholder="e.g. 09171234567"></td>
+                <td class="admin-actions">
+                    <a href="{{ url_for('admin_student_detail', student_id=s.student_id) }}" class="btn-view">Edit</a>
+                    <button form="student-form-{{ s.student_id }}" type="submit" class="btn-save">Save</button>
+                    <button type="button" class="btn-view rfid-register-btn" data-user-type="student" data-user-id="{{ s.student_id }}">Register RFID</button>
+                    <form method="POST" action="{{ url_for('admin_delete_student', student_id=s.student_id) }}"
+                          class="inline-form" onsubmit="return confirm('Delete this student?');">
+                        <button type="submit" class="btn-delete">Delete</button>
+                    </form>
+                    <span id="rfid-status-student-{{ s.student_id }}" class="rfid-register-status"></span>
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="7">No students yet.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% for s in students %}
+    <form id="student-form-{{ s.student_id }}" method="POST" action="{{ url_for('admin_update_student', student_id=s.student_id) }}"></form>
+    {% endfor %}
+
+    <h3>Add Student</h3>
+    <p class="meta">
+        This just creates the student's record — they aren't in any class
+        yet. Enroll them from their Edit page once you're ready. Username
+        and password are their login for the student portal
+        (/student-dashboard).
+    </p>
+    <form method="POST" action="{{ url_for('admin_add_student') }}" class="admin-add-form">
+        <input name="rfid_tag" placeholder="RFID Tag (e.g. 04B1C2D3)" required>
+        <input name="first_name" placeholder="First Name" required>
+        <input name="last_name" placeholder="Last Name" required>
+        <input name="section" placeholder="Section (e.g. BSIT-3A)" required>
+        <input name="username" placeholder="Login Username" required>
+        <input type="password" name="password" placeholder="Login Password" required>
+        <input name="phone_number" placeholder="Phone Number (optional, for SMS)">
+        <button type="submit">Add Student</button>
+    </form>
+</section>
+
+<!-- ============================== ROOMS =============================== -->
+<section class="admin-section">
+    <h2>Rooms</h2>
+    <table class="roster-table admin-table">
+        <thead>
+            <tr><th>Room</th><th></th></tr>
+        </thead>
+        <tbody>
+            {% for r in rooms %}
+            <tr>
+                <td>{{ r.room_name }}</td>
+                <td class="admin-actions">
+                    <form method="POST" action="{{ url_for('admin_delete_room', room_id=r.room_id) }}"
+                          class="inline-form" onsubmit="return confirm('Delete this room?');">
+                        <button type="submit" class="btn-delete">Delete</button>
+                    </form>
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="2">No rooms yet.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <h3>Add a Room</h3>
+    <p class="meta">
+
+    </p>
+    <form method="POST" action="{{ url_for('admin_add_room') }}" class="admin-add-form">
+        <input name="room_name" placeholder="Room Name (e.g. Room 301)" required>
+        <button type="submit">Add Room</button>
+    </form>
+</section>
+
+<!-- ============================= CLASSES ============================= -->
+<section class="admin-section">
+    <h2>Classes</h2>
+    <table class="roster-table admin-table">
+        <thead>
+            <tr><th>Subject</th><th>Teacher</th><th>Room</th><th>Start</th><th>End</th><th>Window (min)</th><th></th></tr>
+        </thead>
+        <tbody>
+            {% for c in classes %}
+            <tr>
+                <td>{{ c.subject_name }}</td>
+                <td>{{ c.teacher_name or "Unassigned" }}</td>
+                <td>{{ c.room_number or "—" }}</td>
+                <td>{{ c.start_time or "—" }}</td>
+                <td>{{ c.end_time or "—" }}</td>
+                <td>{{ c.attendance_window_minutes }}</td>
+                <td class="admin-actions">
+                    <form method="POST" action="{{ url_for('admin_delete_class', class_id=c.class_id) }}"
+                          class="inline-form" onsubmit="return confirm('Delete this class? This also removes its attendance records and enrollments.');">
+                        <button type="submit" class="btn-delete">Delete</button>
+                    </form>
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="7">No classes yet.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <h3>Add a Class</h3>
+    <p class="meta">
+
+    </p>
+    <form method="POST" action="{{ url_for('admin_add_class') }}" class="admin-add-form">
+        <input name="subject_name" placeholder="Subject Name" required>
+        <button type="submit">Add Class</button>
+    </form>
+
+    <h3>Assign Class</h3>
+    <p class="meta">
+
+    </p>
+    {% if classes and teachers %}
+    <form method="POST" action="{{ url_for('admin_assign_class') }}" class="admin-add-form">
+        <select name="class_id" required>
+            <option value="" disabled selected>Class</option>
+            {% for c in classes %}
+            <option value="{{ c.class_id }}">
+                {{ c.subject_name }}
+                {% if c.teacher_name %} (currently {{ c.teacher_name }}{% if c.start_time %}, {{ c.start_time }}&ndash;{{ c.end_time }}{% endif %}){% else %} (unassigned){% endif %}
+            </option>
+            {% endfor %}
+        </select>
+        <select name="teacher_id" required>
+            <option value="" disabled selected>Teacher</option>
+            {% for t in teachers %}
+            <option value="{{ t.teacher_id }}">{{ t.first_name }} {{ t.last_name }}</option>
+            {% endfor %}
+        </select>
+        <select name="room_number">
+            <option value="" selected>No room yet</option>
+            {% for r in rooms %}
+            <option value="{{ r.room_name }}">{{ r.room_name }}</option>
+            {% endfor %}
+        </select>
+        <input type="time" name="start_time">
+        <input type="time" name="end_time">
+        <input type="number" min="1" name="attendance_window_minutes" value="15" placeholder="Window (min)">
+        <button type="submit">Assign</button>
+    </form>
+    {% elif not classes %}
+    <p class="meta">Add a class first before assigning it.</p>
+    {% else %}
+    <p class="meta">Add a teacher first before assigning a class.</p>
+    {% endif %}
+</section>
+
+<script>
+    // "Register RFID" — arms the server to capture the next /kiosk tap
+    // (real RC522 or the simulated kiosk page) and write it into this
+    // row's rfid_tag instead of it being processed as a normal tap. Only
+    // one registration is armed at a time; a button's poll notices if its
+    // own registration got superseded by another row and quietly resets.
+    (function () {
+        const POLL_INTERVAL_MS = 1500;
+        const START_URL = "{{ url_for('admin_rfid_register_start') }}";
+        const CANCEL_URL = "{{ url_for('admin_rfid_register_cancel') }}";
+        const STATUS_URL = "{{ url_for('api_rfid_register_status') }}";
+
+        document.querySelectorAll(".rfid-register-btn").forEach((btn) => {
+            const userType = btn.dataset.userType;
+            const userId = parseInt(btn.dataset.userId, 10);
+            const input = document.getElementById(`rfid-input-${userType}-${userId}`);
+            const statusEl = document.getElementById(`rfid-status-${userType}-${userId}`);
+            let pollTimer = null;
+
+            function stopPolling() {
+                if (pollTimer) {
+                    clearInterval(pollTimer);
+                    pollTimer = null;
+                }
+            }
+
+            function setWaiting(waiting) {
+                btn.dataset.waiting = waiting ? "1" : "0";
+                btn.textContent = waiting ? "Cancel" : "Register RFID";
+            }
+
+            function setStatus(text, cls) {
+                statusEl.textContent = text || "";
+                statusEl.className = "rfid-register-status" + (cls ? " " + cls : "");
+            }
+
+            function poll() {
+                pollTimer = setInterval(() => {
+                    fetch(STATUS_URL)
+                        .then((r) => r.json())
+                        .then((state) => {
+                            const isThisRow = state.user_type === userType && state.user_id === userId;
+                            if (state.active && state.status === "waiting" && isThisRow) {
+                                return; // still waiting on this row's tap
+                            }
+                            stopPolling();
+                            setWaiting(false);
+                            if (isThisRow && state.status === "success") {
+                                input.value = state.tag;
+                                setStatus("Registered: " + state.tag, "rfid-register-success");
+                            } else if (isThisRow && state.status === "error") {
+                                setStatus(state.message || "Registration failed.", "rfid-register-error");
+                            } else {
+                                // A different row took over the single registration slot, or it was cancelled.
+                                setStatus("");
+                            }
+                        })
+                        .catch(() => {
+                            stopPolling();
+                            setWaiting(false);
+                            setStatus("Lost connection while waiting for a tap.", "rfid-register-error");
+                        });
+                }, POLL_INTERVAL_MS);
+            }
+
+            btn.addEventListener("click", () => {
+                if (btn.dataset.waiting === "1") {
+                    stopPolling();
+                    setWaiting(false);
+                    setStatus("");
+                    fetch(CANCEL_URL, { method: "POST" });
+                    return;
+                }
+
+                setStatus("");
+                setWaiting(true);
+                setStatus("Tap the card now…");
+                fetch(START_URL, {
+                    method: "POST",
+                    body: new URLSearchParams({ user_type: userType, user_id: userId }),
+                })
+                    .then((r) => r.json())
+                    .then((res) => {
+                        if (!res.ok) {
+                            setWaiting(false);
+                            setStatus(res.error || "Could not start registration.", "rfid-register-error");
+                            return;
+                        }
+                        poll();
+                    })
+                    .catch(() => {
+                        setWaiting(false);
+                        setStatus("Could not start registration.", "rfid-register-error");
+                    });
+            });
+        });
+    })();
+</script>
+{% endblock %}

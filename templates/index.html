@@ -1,0 +1,243 @@
+{% extends "base.html" %}
+{% block title %}RoomSync - Schedule Display{% endblock %}
+
+{% block content %}
+<div class="clock" id="clock"></div>
+
+<div id="display-root" class="display-root"></div>
+
+<script>
+    const INITIAL_STATE = {{ initial_state|tojson }};
+    let currentState = INITIAL_STATE;
+    let clockSkew = 0;
+
+    function syncSkew(serverTimeIso) {
+        clockSkew = new Date(serverTimeIso).getTime() - Date.now();
+    }
+    syncSkew(currentState.server_time);
+
+    function serverNow() {
+        return Date.now() + clockSkew;
+    }
+
+    function escapeHtml(str) {
+        if (str === null || str === undefined) return "";
+        return String(str).replace(/[&<>"']/g, (c) => ({
+            "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+        }[c]));
+    }
+
+    function fmtMMSS(totalSeconds) {
+        totalSeconds = Math.max(0, Math.round(totalSeconds));
+        const m = Math.floor(totalSeconds / 60);
+        const s = totalSeconds % 60;
+        return `${m}:${s.toString().padStart(2, "0")}`;
+    }
+
+    function renderClock() {
+        document.getElementById("clock").textContent =
+            new Date(serverNow()).toLocaleString("en-US", {
+                weekday: "long", year: "numeric", month: "long", day: "numeric",
+                hour: "numeric", minute: "2-digit", second: "2-digit", hour12: true,
+            });
+    }
+
+    function render() {
+        const root = document.getElementById("display-root");
+        const state = currentState;
+
+        if (state.flash) {
+            const cls = state.flash.type || "info";
+            root.innerHTML = `<div class="stage-flash flash-${cls}">${escapeHtml(state.flash.message)}</div>`;
+            return;
+        }
+
+        switch (state.stage) {
+            case "teacher_early_confirm":
+                root.innerHTML = `
+                    <div class="stage-confirm">
+                        <p class="confirm-question">Hello Sir/Ma'am ${escapeHtml(state.teacher_name)},
+                        you are ${state.minutes_early} minute(s) in advance, do you want to proceed?</p>
+                        <div class="confirm-buttons">
+                            <button id="confirm-yes" class="btn-yes">Yes</button>
+                            <button id="confirm-no" class="btn-no">No</button>
+                        </div>
+                    </div>`;
+                document.getElementById("confirm-yes").onclick = () => sendConfirm("yes");
+                document.getElementById("confirm-no").onclick = () => sendConfirm("no");
+                break;
+
+            case "teacher_early_wait": {
+                const waitUntil = new Date(state.wait_until).getTime();
+                const remainingMin = Math.max(0, Math.ceil((waitUntil - serverNow()) / 60000));
+                root.innerHTML = `
+                    <div class="stage-wait">
+                        <h2>Welcome, Sir/Ma'am!</h2>
+                        <p>Attendance starting in <strong>${remainingMin}</strong> minute(s)</p>
+                    </div>`;
+                break;
+            }
+
+            case "attendance_open": {
+                const endAt = new Date(state.countdown_end_at).getTime();
+                const remainingSec = (endAt - serverNow()) / 1000;
+                const total = state.total_students ?? 0;
+                const presentCount = state.present_count ?? 0;
+                const boxes = Array.from({ length: total }, (_, i) => `
+                    <div class="roster-box ${i < presentCount ? "present" : "absent"}"></div>
+                `).join("");
+                root.innerHTML = `
+                    <div class="stage-open">
+                        <h2>Hello Sir/Ma'am ${escapeHtml(state.teacher_name)}</h2>
+                        <p class="class-name">${escapeHtml(state.subject_name)}</p>
+                        <div class="countdown">${fmtMMSS(remainingSec)}</div>
+                        <p class="hint">Students may now tap to record attendance.</p>
+                        <div class="roster-boxes">${boxes}</div>
+                    </div>`;
+                break;
+            }
+
+            case "end_early_confirm":
+                root.innerHTML = `
+                    <div class="stage-confirm">
+                        <p class="confirm-question">Do you want to end the class early?</p>
+                        <div class="confirm-buttons">
+                            <button id="end-early-yes" class="btn-yes">Yes</button>
+                            <button id="end-early-no" class="btn-no">No</button>
+                        </div>
+                    </div>`;
+                document.getElementById("end-early-yes").onclick = () => sendEndEarlyConfirm("yes");
+                document.getElementById("end-early-no").onclick = () => sendEndEarlyConfirm("no");
+                break;
+
+            case "class_ongoing":
+                root.innerHTML = `
+                    <div class="stage-ongoing">
+                        <h1>Class is Ongoing</h1>
+                        <p class="class-name">${escapeHtml(state.subject_name)} until ${escapeHtml(state.end_time)}</p>
+                        <p class="hint">Attendance closed!</p>
+                    </div>`;
+                break;
+
+            case "session_summary": {
+                const expiresAt = new Date(state.summary_expires_at).getTime();
+                const remainingSec = Math.max(0, Math.ceil((expiresAt - serverNow()) / 1000));
+                const presentNames = (state.roster || []).filter((s) => s.present).map((s) => escapeHtml(s.name));
+                const cancelButton = state.is_early_end
+                    ? `<button id="summary-cancel" class="btn-cancel">Cancel</button>`
+                    : "";
+                root.innerHTML = `
+                    <div class="stage-summary">
+                        <h2>Session Summary</h2>
+                        <p class="summary-line"><strong>Teacher:</strong> ${escapeHtml(state.teacher_name)}</p>
+                        <p class="summary-line"><strong>Class:</strong> ${escapeHtml(state.subject_name)}</p>
+                        <p class="summary-line"><strong>Present (${state.present_count ?? 0}/${state.total_students ?? 0}):</strong>
+                            ${presentNames.length ? presentNames.join(", ") : "No students present"}</p>
+                        <p class="confirm-question">Is this information correct?</p>
+                        <div class="confirm-buttons">
+                            <button id="summary-yes" class="btn-yes">Yes</button>
+                            <button id="summary-no" class="btn-no">No</button>
+                            ${cancelButton}
+                        </div>
+                        <p class="hint">Auto-confirming in ${remainingSec}s if no response</p>
+                    </div>`;
+                document.getElementById("summary-yes").onclick = () => sendSummaryConfirm("yes");
+                document.getElementById("summary-no").onclick = () => sendSummaryConfirm("no");
+                if (state.is_early_end) {
+                    document.getElementById("summary-cancel").onclick = () => sendSummaryConfirm("cancel");
+                }
+                break;
+            }
+
+            case "session_summary_edit": {
+                const expiresAt = new Date(state.summary_expires_at).getTime();
+                const remainingSec = Math.max(0, Math.ceil((expiresAt - serverNow()) / 1000));
+                const toggles = (state.roster || []).map((s) => `
+                    <button class="roster-toggle ${s.present ? "present" : "absent"}" data-student-id="${s.student_id}">
+                        ${escapeHtml(s.name)}
+                    </button>
+                `).join("");
+                const editCancelButton = state.is_early_end
+                    ? `<button id="summary-edit-cancel" class="btn-cancel">Cancel</button>`
+                    : "";
+                root.innerHTML = `
+                    <div class="stage-summary">
+                        <h2>Edit Attendance</h2>
+                        <p class="hint">Tap a student to toggle present / absent.</p>
+                        <div class="roster-toggle-grid">${toggles}</div>
+                        <div class="confirm-buttons">
+                            <button id="summary-save" class="btn-yes">Confirm &amp; Continue</button>
+                            ${editCancelButton}
+                        </div>
+                        <p class="hint">Auto-confirming in ${remainingSec}s if no response</p>
+                    </div>`;
+                root.querySelectorAll(".roster-toggle").forEach((btn) => {
+                    btn.onclick = () => sendSummaryToggle(btn.dataset.studentId);
+                });
+                document.getElementById("summary-save").onclick = () => sendSummaryConfirm("yes");
+                if (state.is_early_end) {
+                    document.getElementById("summary-edit-cancel").onclick = () => sendSummaryConfirm("cancel");
+                }
+                break;
+            }
+
+            case "welcome":
+            default:
+                root.innerHTML = `
+                    <div class="stage-welcome">
+                        <h1>WELCOME</h1>
+                        <p>Tap your RFID card to begin</p>
+                    </div>`;
+                break;
+        }
+    }
+
+    function postJSON(url, body) {
+        fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+        })
+            .then((r) => r.json())
+            .then((data) => {
+                currentState = data;
+                syncSkew(data.server_time);
+                render();
+            })
+            .catch(() => {});
+    }
+
+    function sendConfirm(action) {
+        postJSON("/api/teacher_confirm", { action });
+    }
+
+    function sendEndEarlyConfirm(action) {
+        postJSON("/api/end_early_confirm", { action });
+    }
+
+    function sendSummaryConfirm(action) {
+        postJSON("/api/session_summary_confirm", { action });
+    }
+
+    function sendSummaryToggle(studentId) {
+        postJSON("/api/session_summary_toggle", { student_id: Number(studentId) });
+    }
+
+    function poll() {
+        fetch("/api/display_state")
+            .then((r) => r.json())
+            .then((data) => {
+                currentState = data;
+                syncSkew(data.server_time);
+                render();
+            })
+            .catch(() => {});
+    }
+
+    render();
+    renderClock();
+    setInterval(render, 1000);
+    setInterval(renderClock, 1000);
+    setInterval(poll, 2500);
+</script>
+{% endblock %}

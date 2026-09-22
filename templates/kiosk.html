@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}RoomSync - Simulated RFID Kiosk{% endblock %}
+
+{% block content %}
+<h1>Simulated RFID Tap</h1>
+<p class="meta">
+    No RC522 reader connected yet. Type a tag ID below or click a sample
+    teacher's/student's button to simulate a tap, just like waving a card
+    over the reader would on the real Raspberry Pi setup.
+</p>
+
+<div class="card small">
+    Main display is currently showing: <strong>{{ display_state.stage.replace('_', ' ')|title }}</strong>
+</div>
+
+{% if message %}
+    <div class="flash flash-{{ message_type }}">{{ message }}</div>
+{% endif %}
+
+{% if message_type == "success" %}
+<script>document.addEventListener("DOMContentLoaded", () => playTapBeep("positive"));</script>
+{% elif message_type in ("warning", "error") %}
+<script>document.addEventListener("DOMContentLoaded", () => playTapBeep("negative"));</script>
+{% endif %}
+
+<form method="POST" class="tap-form">
+    <label for="rfid_tag">RFID Tag ID</label>
+    <input type="text" id="rfid_tag" name="rfid_tag" placeholder="e.g. 04A1B2C3" autofocus autocomplete="off">
+    <button type="submit">Simulate Tap</button>
+</form>
+
+<h2>Quick-Tap Sample Teachers</h2>
+<div class="button-grid">
+    {% for t in sample_teachers %}
+    <form method="POST" class="quick-tap teacher">
+        <input type="hidden" name="rfid_tag" value="{{ t.rfid_tag }}">
+        <button type="submit">{{ t.first_name }} {{ t.last_name }}<br><small>{{ t.rfid_tag }}</small></button>
+    </form>
+    {% endfor %}
+</div>
+
+<h2>Quick-Tap Sample Students</h2>
+<div class="button-grid">
+    {% for s in sample_students %}
+    <form method="POST" class="quick-tap">
+        <input type="hidden" name="rfid_tag" value="{{ s.rfid_tag }}">
+        <button type="submit">{{ s.first_name }} {{ s.last_name }}<br><small>{{ s.rfid_tag }}</small></button>
+    </form>
+    {% endfor %}
+</div>
+
+<script>
+    // Synthesizes tap feedback beeps with the Web Audio API so no audio
+    // file needs to be shipped/loaded. "positive" = tap approved, no
+    // violations. "negative" = tap invalid/rejected.
+    function playTapBeep(kind) {
+        try {
+            const ctx = new (window.AudioContext || window.webkitAudioContext)();
+            const startAt = ctx.currentTime;
+
+            function tone(freq, offset, duration, waveType, peakGain) {
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = waveType;
+                osc.frequency.value = freq;
+                gain.gain.setValueAtTime(0, startAt + offset);
+                gain.gain.linearRampToValueAtTime(peakGain, startAt + offset + 0.01);
+                gain.gain.exponentialRampToValueAtTime(0.001, startAt + offset + duration);
+                osc.connect(gain).connect(ctx.destination);
+                osc.start(startAt + offset);
+                osc.stop(startAt + offset + duration + 0.02);
+            }
+
+            if (kind === "positive") {
+                tone(880, 0, 0.1, "sine", 0.2);
+                tone(1320, 0.11, 0.16, "sine", 0.2);
+            } else {
+                tone(220, 0, 0.28, "square", 0.15);
+            }
+        } catch (err) {
+            // Web Audio unavailable/blocked (e.g. no user gesture yet) — fail silently.
+        }
+    }
+</script>
+{% endblock %}

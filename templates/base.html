@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}RoomSync{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="navbar-brand">RoomSync</div>
+        <div class="navbar-links">
+            <a href="{{ url_for('index') }}">Schedule Display</a>
+            <a href="{{ url_for('kiosk') }}">Simulated RFID Kiosk</a>
+            <a href="{{ url_for('summary') }}">Attendance Summary</a>
+            {% if session.get('role') == 'teacher' %}
+            <a href="{{ url_for('dashboard') }}">My Dashboard</a>
+            {% endif %}
+            {% if session.get('role') == 'student' %}
+            <a href="{{ url_for('student_dashboard') }}">My Dashboard</a>
+            {% endif %}
+            {% if session.get('role') == 'admin' %}
+            <a href="{{ url_for('admin') }}">Admin</a>
+            {% endif %}
+            {% if session.get('role') %}
+            <a href="{{ url_for('logout') }}">Logout</a>
+            {% else %}
+            <a href="{{ url_for('login') }}">Login</a>
+            {% endif %}
+        </div>
+    </nav>
+    <main class="container">
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>
