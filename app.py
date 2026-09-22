@@ -707,11 +707,11 @@ def get_display_state(conn, now=None):
 
     elif state["stage"] in ("session_summary", "session_summary_edit") and state["class_id"]:
         today = now.strftime("%Y-%m-%d")
-        roster, present_count, _late_count, _absent_count = get_roster_for_date(conn, state["class_id"], today)
+        roster, present_count, _late_count, _excused_count, _absent_count = get_roster_for_date(conn, state["class_id"], today)
         data["present_count"] = present_count
         data["total_students"] = len(roster)
         data["roster"] = [
-            {"student_id": r["student_id"], "name": f"{r['first_name']} {r['last_name']}", "present": r["status"] != "absent"}
+            {"student_id": r["student_id"], "name": f"{r['first_name']} {r['last_name']}", "status": r["status"]}
             for r in roster
         ]
 
@@ -914,11 +914,16 @@ def api_session_summary_confirm():
     return jsonify(data)
 
 
+SUMMARY_TOGGLE_CYCLE = ["absent", "present", "late", "excused"]
+
+
 @app.route("/api/session_summary_toggle", methods=["POST"])
 def api_session_summary_toggle():
-    """Flips one student's present/absent status while editing the summary.
-    Present is represented by an attendance row (matching how a live tap
-    records it); absent is simply the absence of one."""
+    """Cycles one student's status while editing the summary: absent ->
+    present -> late -> excused -> absent, one step per tap. Absent is
+    represented by the *absence* of an attendance row (matching how a
+    student who never tapped in shows up everywhere else); the other
+    three are an attendance row with that status."""
     payload = request.get_json(silent=True) or {}
     student_id = payload.get("student_id")
     now = datetime.now()
@@ -930,21 +935,31 @@ def api_session_summary_toggle():
             class_id = room_state["class_id"]
             today = now.strftime("%Y-%m-%d")
             existing = conn.execute(
-                "SELECT 1 FROM attendance WHERE student_id = ? AND class_id = ? AND date = ?",
+                "SELECT status FROM attendance WHERE student_id = ? AND class_id = ? AND date = ?",
                 (student_id, class_id, today),
             ).fetchone()
-            if existing:
+            current_status = existing["status"] if existing else "absent"
+            next_status = SUMMARY_TOGGLE_CYCLE[
+                (SUMMARY_TOGGLE_CYCLE.index(current_status) + 1) % len(SUMMARY_TOGGLE_CYCLE)
+            ]
+
+            if next_status == "absent":
                 conn.execute(
                     "DELETE FROM attendance WHERE student_id = ? AND class_id = ? AND date = ?",
                     (student_id, class_id, today),
+                )
+            elif existing:
+                conn.execute(
+                    "UPDATE attendance SET status = ? WHERE student_id = ? AND class_id = ? AND date = ?",
+                    (next_status, student_id, class_id, today),
                 )
             else:
                 conn.execute(
                     """
                     INSERT INTO attendance (student_id, class_id, date, time_tapped, status)
-                    VALUES (?, ?, ?, ?, 'present')
+                    VALUES (?, ?, ?, ?, ?)
                     """,
-                    (student_id, class_id, today, now.strftime("%H:%M:%S")),
+                    (student_id, class_id, today, now.strftime("%H:%M:%S"), next_status),
                 )
             conn.commit()
 
@@ -1007,11 +1022,21 @@ def _rfid_tag_owner(conn, rfid_tag):
 
 
 def _try_register_rfid_tap(conn, rfid_tag, now):
-    """If RFID registration is currently armed, consumes this tap to assign
-    rfid_tag to whichever teacher/student is being registered and returns a
-    (message, message_type) tuple for the kiosk page. Returns None if
-    registration isn't active (or the tap was blank), so the caller falls
-    through to the normal teacher/student tap handling."""
+    """If RFID registration is currently armed, consumes this tap and
+    returns a (message, message_type) tuple for the kiosk page. Returns
+    None if registration isn't active (or the tap was blank), so the
+    caller falls through to the normal teacher/student tap handling.
+
+    Two modes, both set up by admin_rfid_register_start(): with a
+    user_id, this writes rfid_tag onto that existing teacher/student row
+    (the "Register RFID" button next to an existing row). Without one
+    (user_id is None — the "Scan RFID Card" button on the Add
+    Teacher/Add Student form, for someone who doesn't have a row yet),
+    this only captures the tag and checks it isn't already someone
+    else's — nothing is written to the database, since there's no row to
+    write it onto yet; the admin page fills the tag into the Add form's
+    hidden field instead, to be submitted along with the rest of that
+    new person's details."""
     if not rfid_tag:
         return None
 
@@ -1027,17 +1052,20 @@ def _try_register_rfid_tap(conn, rfid_tag, now):
         person_name = rfid_registration_state["person_name"]
 
         owner = _rfid_tag_owner(conn, rfid_tag)
-        if owner and not (owner[0] == user_type and owner[1] == user_id):
+        if owner and not (user_id is not None and owner[0] == user_type and owner[1] == user_id):
             message = f"Tag '{rfid_tag}' is already registered to {owner[2]} {owner[3]}."
             rfid_registration_state.update(active=False, status="error", message=message, tag=None)
             return message, "error"
 
-        table = "teachers" if user_type == "teacher" else "students"
-        id_column = "teacher_id" if user_type == "teacher" else "student_id"
-        conn.execute(f"UPDATE {table} SET rfid_tag = ? WHERE {id_column} = ?", (rfid_tag, user_id))
-        conn.commit()
+        if user_id is not None:
+            table = "teachers" if user_type == "teacher" else "students"
+            id_column = "teacher_id" if user_type == "teacher" else "student_id"
+            conn.execute(f"UPDATE {table} SET rfid_tag = ? WHERE {id_column} = ?", (rfid_tag, user_id))
+            conn.commit()
+            message = f"RFID tag '{rfid_tag}' registered to {person_name}."
+        else:
+            message = f"RFID tag '{rfid_tag}' captured."
 
-        message = f"RFID tag '{rfid_tag}' registered to {person_name}."
         rfid_registration_state.update(active=False, status="success", message=message, tag=rfid_tag)
         return message, "success"
 
@@ -1097,10 +1125,44 @@ def kiosk():
 @app.route("/admin")
 @login_required(role="admin")
 def admin():
-    """Administrator page: manage teachers, students, rooms, and classes."""
+    """Administrator landing page: one button per section (Teachers,
+    Students, Classes, Rooms), each its own page — rather than one long
+    page with everything on it."""
+    return render_template("admin.html")
+
+
+@app.route("/admin/teachers")
+@login_required(role="admin")
+def admin_teachers():
     conn = get_db()
     teachers = conn.execute("SELECT * FROM teachers ORDER BY first_name, last_name").fetchall()
+    conn.close()
+    return render_template("admin_teachers.html", teachers=teachers)
+
+
+@app.route("/admin/students")
+@login_required(role="admin")
+def admin_students():
+    conn = get_db()
     students = conn.execute("SELECT * FROM students ORDER BY first_name, last_name").fetchall()
+    conn.close()
+    return render_template("admin_students.html", students=students)
+
+
+@app.route("/admin/rooms")
+@login_required(role="admin")
+def admin_rooms():
+    conn = get_db()
+    rooms = conn.execute("SELECT * FROM rooms ORDER BY room_name").fetchall()
+    conn.close()
+    return render_template("admin_rooms.html", rooms=rooms)
+
+
+@app.route("/admin/classes")
+@login_required(role="admin")
+def admin_classes():
+    conn = get_db()
+    teachers = conn.execute("SELECT * FROM teachers ORDER BY first_name, last_name").fetchall()
     rooms = conn.execute("SELECT * FROM rooms ORDER BY room_name").fetchall()
     classes = conn.execute(
         """
@@ -1110,13 +1172,14 @@ def admin():
         ORDER BY c.subject_name
         """
     ).fetchall()
+    subjects = sorted({c["subject_name"] for c in classes})
     conn.close()
     return render_template(
-        "admin.html",
+        "admin_classes.html",
         teachers=teachers,
-        students=students,
         rooms=rooms,
         classes=classes,
+        subjects=subjects,
     )
 
 
@@ -1124,32 +1187,45 @@ def admin():
 @login_required(role="admin")
 def admin_rfid_register_start():
     """Arms RFID registration for one teacher/student, so the next tap
-    that hits /kiosk (real or simulated) gets written to their rfid_tag
-    instead of being processed as a normal attendance/welcome tap."""
+    that hits /kiosk (real or simulated) gets consumed by it instead of
+    being processed as a normal attendance/welcome tap.
+
+    With a user_id: the "Register RFID" button next to an existing row —
+    the tap gets written straight onto that row's rfid_tag.
+
+    Without one (a brand-new person who doesn't have a row yet — the
+    "Scan RFID Card" button on the Add Teacher/Add Student form): the tap
+    is only captured and checked against every existing tag, not written
+    anywhere; the admin page fills it into that form's hidden field."""
     user_type = request.form.get("user_type")
     user_id = request.form.get("user_id", type=int)
-    if user_type not in ("teacher", "student") or not user_id:
+    if user_type not in ("teacher", "student"):
         return jsonify({"ok": False, "error": "Invalid target."}), 400
 
-    conn = get_db()
-    if user_type == "teacher":
-        row = conn.execute(
-            "SELECT first_name, last_name FROM teachers WHERE teacher_id = ?", (user_id,)
-        ).fetchone()
+    if user_id:
+        conn = get_db()
+        if user_type == "teacher":
+            row = conn.execute(
+                "SELECT first_name, last_name FROM teachers WHERE teacher_id = ?", (user_id,)
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT first_name, last_name FROM students WHERE student_id = ?", (user_id,)
+            ).fetchone()
+        conn.close()
+        if not row:
+            return jsonify({"ok": False, "error": "Not found."}), 404
+        person_name = f"{row['first_name']} {row['last_name']}"
     else:
-        row = conn.execute(
-            "SELECT first_name, last_name FROM students WHERE student_id = ?", (user_id,)
-        ).fetchone()
-    conn.close()
-    if not row:
-        return jsonify({"ok": False, "error": "Not found."}), 404
+        user_id = None
+        person_name = f"a new {user_type}"
 
     with rfid_registration_lock:
         rfid_registration_state.update(
             active=True,
             user_type=user_type,
             user_id=user_id,
-            person_name=f"{row['first_name']} {row['last_name']}",
+            person_name=person_name,
             status="waiting",
             tag=None,
             message=None,
@@ -1189,7 +1265,7 @@ def admin_teacher_detail(teacher_id):
     if not teacher:
         conn.close()
         flash("Teacher not found.", "error")
-        return redirect(url_for("admin"))
+        return redirect(url_for("admin_teachers"))
 
     classes = conn.execute(
         "SELECT * FROM classes WHERE teacher_id = ? ORDER BY start_time", (teacher_id,)
@@ -1229,7 +1305,7 @@ def admin_add_teacher():
         except sqlite3.IntegrityError:
             flash(f"RFID tag '{rfid_tag}' or username '{username}' is already in use.", "error")
         conn.close()
-    return redirect(url_for("admin"))
+    return redirect(url_for("admin_teachers"))
 
 
 @app.route("/admin/teachers/<int:teacher_id>/update", methods=["POST"])
@@ -1253,7 +1329,7 @@ def admin_update_teacher(teacher_id):
         except sqlite3.IntegrityError:
             flash(f"RFID tag '{rfid_tag}' is already in use.", "error")
         conn.close()
-    return redirect(url_for("admin"))
+    return redirect(url_for("admin_teachers"))
 
 
 @app.route("/admin/teachers/<int:teacher_id>/delete", methods=["POST"])
@@ -1267,7 +1343,7 @@ def admin_delete_teacher(teacher_id):
     except sqlite3.IntegrityError:
         flash("Cannot delete this teacher — they're still assigned to a class. Reassign or delete that class first.", "error")
     conn.close()
-    return redirect(url_for("admin"))
+    return redirect(url_for("admin_teachers"))
 
 
 @app.route("/admin/teachers/<int:teacher_id>/reset_password", methods=["POST"])
@@ -1285,7 +1361,7 @@ def admin_reset_teacher_password(teacher_id):
         conn.commit()
         conn.close()
         flash("Teacher's password has been reset.", "success")
-    return redirect(url_for("admin"))
+    return redirect(url_for("admin_teachers"))
 
 
 @app.route("/admin/students/add", methods=["POST"])
@@ -1313,7 +1389,7 @@ def admin_add_student():
         except sqlite3.IntegrityError:
             flash(f"RFID tag '{rfid_tag}' or username '{username}' is already in use.", "error")
         conn.close()
-    return redirect(url_for("admin"))
+    return redirect(url_for("admin_students"))
 
 
 @app.route("/admin/students/<int:student_id>/reset_password", methods=["POST"])
@@ -1360,7 +1436,7 @@ def admin_update_student(student_id):
         conn.close()
     if student_context:
         return redirect(url_for("admin_student_detail", student_id=student_context))
-    return redirect(url_for("admin"))
+    return redirect(url_for("admin_students"))
 
 
 @app.route("/admin/students/<int:student_id>/delete", methods=["POST"])
@@ -1377,7 +1453,7 @@ def admin_delete_student(student_id):
     except sqlite3.IntegrityError:
         flash("Cannot delete this student — they have attendance records tied to them.", "error")
     conn.close()
-    return redirect(url_for("admin"))
+    return redirect(url_for("admin_students"))
 
 
 @app.route("/admin/students/<int:student_id>")
@@ -1392,7 +1468,7 @@ def admin_student_detail(student_id):
     if not student:
         conn.close()
         flash("Student not found.", "error")
-        return redirect(url_for("admin"))
+        return redirect(url_for("admin_students"))
 
     enrollments = conn.execute(
         """
@@ -1480,6 +1556,7 @@ def admin_enroll_student(student_id):
 @login_required(role="admin")
 def admin_unenroll_student(student_id):
     class_id = request.form.get("class_id", type=int)
+    class_context = request.form.get("class_context", type=int)
     conn = get_db()
     conn.execute(
         "DELETE FROM enrollments WHERE student_id = ? AND class_id = ?",
@@ -1488,7 +1565,96 @@ def admin_unenroll_student(student_id):
     conn.commit()
     conn.close()
     flash("Removed from class. Their attendance history for it is kept.", "success")
+    if class_context:
+        return redirect(url_for("admin_class_enroll", class_id=class_context))
     return redirect(url_for("admin_student_detail", student_id=student_id))
+
+
+@app.route("/admin/classes/<int:class_id>/enroll")
+@login_required(role="admin")
+def admin_class_enroll(class_id):
+    """Admin's class-centric enrollment page — the "Enroll Students"
+    button on the Classes table. The reverse direction of
+    admin_student_detail()'s own "Enroll in a Class" form: pick students
+    to add to *this* class, instead of picking a class to add one
+    student to."""
+    conn = get_db()
+    class_info = conn.execute(
+        """
+        SELECT c.*, t.first_name || ' ' || t.last_name AS teacher_name
+        FROM classes c
+        LEFT JOIN teachers t ON t.teacher_id = c.teacher_id
+        WHERE c.class_id = ?
+        """,
+        (class_id,),
+    ).fetchone()
+    if not class_info:
+        conn.close()
+        flash("Class not found.", "error")
+        return redirect(url_for("admin_classes"))
+
+    enrolled = conn.execute(
+        """
+        SELECT st.student_id, st.first_name, st.last_name, st.section
+        FROM enrollments e
+        JOIN students st ON st.student_id = e.student_id
+        WHERE e.class_id = ?
+        ORDER BY st.last_name, st.first_name
+        """,
+        (class_id,),
+    ).fetchall()
+    enrolled_ids = {r["student_id"] for r in enrolled}
+
+    enrollable_students = [
+        s for s in conn.execute(
+            "SELECT student_id, first_name, last_name, section FROM students ORDER BY last_name, first_name"
+        ).fetchall()
+        if s["student_id"] not in enrolled_ids
+    ]
+    conn.close()
+
+    return render_template(
+        "admin_class_enroll.html",
+        class_info=class_info,
+        enrolled=enrolled,
+        enrollable_students=enrollable_students,
+    )
+
+
+@app.route("/admin/classes/<int:class_id>/enroll/add", methods=["POST"])
+@login_required(role="admin")
+def admin_class_enroll_add(class_id):
+    student_id = request.form.get("student_id", type=int)
+    conn = get_db()
+    class_row = conn.execute(
+        "SELECT subject_name, start_time, end_time FROM classes WHERE class_id = ?", (class_id,)
+    ).fetchone()
+
+    if not student_id or not class_row or not class_row["start_time"] or not class_row["end_time"]:
+        flash("Pick a student to enroll.", "error")
+    else:
+        conflict = student_enrollment_conflict(
+            conn, student_id, class_row["start_time"], class_row["end_time"]
+        )
+        if conflict:
+            flash(
+                f"This student is already enrolled in {conflict['subject_name']} "
+                f"({conflict['start_time']}-{conflict['end_time']}) every day, which overlaps "
+                f"{class_row['start_time']}-{class_row['end_time']} — pick a different student.",
+                "error",
+            )
+        else:
+            try:
+                conn.execute(
+                    "INSERT INTO enrollments (student_id, class_id) VALUES (?, ?)",
+                    (student_id, class_id),
+                )
+                conn.commit()
+                flash("Student enrolled.", "success")
+            except sqlite3.IntegrityError:
+                flash("Already enrolled in that class.", "error")
+    conn.close()
+    return redirect(url_for("admin_class_enroll", class_id=class_id))
 
 
 @app.route("/admin/rooms/add", methods=["POST"])
@@ -1508,7 +1674,7 @@ def admin_add_room():
         except sqlite3.IntegrityError:
             flash(f"Room '{room_name}' already exists.", "error")
         conn.close()
-    return redirect(url_for("admin"))
+    return redirect(url_for("admin_rooms"))
 
 
 @app.route("/admin/rooms/<int:room_id>/delete", methods=["POST"])
@@ -1533,7 +1699,7 @@ def admin_delete_room(room_id):
             conn.commit()
             flash("Room deleted.", "success")
     conn.close()
-    return redirect(url_for("admin"))
+    return redirect(url_for("admin_rooms"))
 
 
 @app.route("/admin/classes/add", methods=["POST"])
@@ -1555,26 +1721,38 @@ def admin_add_class():
             f"Added class {subject_name}. Assign it to a teacher and schedule it below once you're ready.",
             "success",
         )
-    return redirect(url_for("admin"))
+    return redirect(url_for("admin_classes"))
 
 
 @app.route("/admin/classes/assign", methods=["POST"])
 @login_required(role="admin")
 def admin_assign_class():
     """Assigns a class to a teacher and sets its room/time. Used both by
-    the "Assign Class" form on /admin (class picked from a dropdown) and
-    by each class card on a teacher's own page (class_id/teacher_id passed
-    as hidden fields, teacher fixed to that page's teacher).
+    the main "Assign Class" form on /admin — which picks a *subject*, not
+    a specific row, since the same subject can now have several sections
+    — and by each class card on a teacher's own page (a specific
+    class_id/teacher_id passed as hidden fields, along with
+    teacher_context, fixed to that page's teacher).
 
-    Picking a class that's already assigned to a *different* teacher and
-    submitting a different teacher_id doesn't overwrite that teacher's
-    assignment — it creates a new class row (a new "section") with the
-    same subject_name, so two teachers can each teach a class with the
-    same subject under their own room/time, as long as neither conflicts.
-    Resubmitting for the *same* teacher (rescheduling their own class, or
-    a first-time assignment of a class that had no teacher yet) still
-    updates that one row in place, same as before."""
+    From the subject-based form: if that subject already has an
+    unassigned row (freshly added via "Add a Class" and never scheduled),
+    this fills that one in — a first-time assignment, nothing to
+    preserve. Otherwise — the subject's existing row(s) all already
+    belong to some teacher, the same one being submitted here or a
+    different one — this always adds a brand new row (a new "section")
+    rather than overwriting any of them, as long as the new schedule
+    doesn't conflict with anything that teacher (or that room) already
+    has. That's how the same teacher ends up able to teach two or more
+    sections of one subject at different times.
+
+    The one path that still edits a row in place rather than adding a
+    new one is teacher_context: each class card on a teacher's own admin
+    page means "reschedule this specific class", not "add a new
+    section" — that's the only place teacher_context gets submitted (the
+    main Assign Class form never sends it), so its presence unambiguously
+    signals an in-place edit."""
     class_id = request.form.get("class_id", type=int)
+    subject_name = request.form.get("subject_name", "").strip()
     teacher_id = request.form.get("teacher_id", type=int)
     room_number = request.form.get("room_number", "").strip()
     start_time = request.form.get("start_time", "").strip()
@@ -1582,7 +1760,7 @@ def admin_assign_class():
     attendance_window_minutes = request.form.get("attendance_window_minutes", type=int) or 15
     teacher_context = request.form.get("teacher_context", type=int)
 
-    if not (class_id and teacher_id):
+    if not ((class_id or subject_name) and teacher_id):
         flash("Pick a class and a teacher to assign.", "error")
     elif bool(start_time) != bool(end_time):
         flash("Set both a start time and an end time, or leave both blank.", "error")
@@ -1592,22 +1770,44 @@ def admin_assign_class():
         flash("Attendance window must be at least 1 minute.", "error")
     else:
         conn = get_db()
-        picked = conn.execute(
-            "SELECT subject_name, teacher_id FROM classes WHERE class_id = ?", (class_id,)
-        ).fetchone()
 
-        if not picked:
-            flash("That class no longer exists.", "error")
-            conn.close()
-            if teacher_context:
-                return redirect(url_for("admin_teacher_detail", teacher_id=teacher_context))
-            return redirect(url_for("admin"))
+        if class_id:
+            # A specific row (a teacher's own class card) — always this
+            # exact one, never a substitute.
+            picked = conn.execute(
+                "SELECT class_id, subject_name, teacher_id FROM classes WHERE class_id = ?", (class_id,)
+            ).fetchone()
+            if not picked:
+                flash("That class no longer exists.", "error")
+                conn.close()
+                if teacher_context:
+                    return redirect(url_for("admin_teacher_detail", teacher_id=teacher_context))
+                return redirect(url_for("admin_classes"))
+        else:
+            # A subject, not a row — reuse an unassigned row of it if one
+            # exists (so "Add a Class" + "Assign Class" for a brand new
+            # subject just fills that one row in); otherwise there's no
+            # row to reuse, and this will insert a brand new section.
+            picked = conn.execute(
+                "SELECT class_id, subject_name, teacher_id FROM classes "
+                "WHERE subject_name = ? AND teacher_id IS NULL ORDER BY class_id LIMIT 1",
+                (subject_name,),
+            ).fetchone()
+            if not picked:
+                picked = {"class_id": None, "subject_name": subject_name, "teacher_id": None}
 
-        is_new_section = picked["teacher_id"] is not None and picked["teacher_id"] != teacher_id
+        # In-place edit only when this came from that exact teacher's own
+        # class card (teacher_context); a brand new row (nothing to
+        # reuse) or an already-assigned row being re-picked for anyone
+        # else — same teacher or a different one — always adds a new
+        # section instead of overwriting it.
+        is_in_place_edit = teacher_context is not None and teacher_context == teacher_id
+        is_new_section = picked["class_id"] is None or (picked["teacher_id"] is not None and not is_in_place_edit)
         # Only excluded from conflict checks when editing that same row in
         # place — a new section's schedule should be checked against every
-        # class including the one it was picked from.
-        conflict_exclude = None if is_new_section else class_id
+        # class including the one it was picked from (even if it's the
+        # same teacher's own other section of this same subject).
+        conflict_exclude = None if is_new_section else picked["class_id"]
 
         teacher_conflict = None
         room_conflict = None
@@ -1641,11 +1841,7 @@ def admin_assign_class():
                  end_time or None, attendance_window_minutes),
             )
             conn.commit()
-            flash(
-                f"Added a new section of {picked['subject_name']} for this teacher — "
-                "the other teacher's assignment for it is unchanged.",
-                "success",
-            )
+            flash(f"Added a new section of {picked['subject_name']} for this teacher.", "success")
         else:
             conn.execute(
                 """
@@ -1655,7 +1851,7 @@ def admin_assign_class():
                 WHERE class_id = ?
                 """,
                 (teacher_id, room_number or None, start_time or None,
-                 end_time or None, attendance_window_minutes, class_id),
+                 end_time or None, attendance_window_minutes, picked["class_id"]),
             )
             conn.commit()
             flash("Class assigned.", "success")
@@ -1663,7 +1859,7 @@ def admin_assign_class():
 
     if teacher_context:
         return redirect(url_for("admin_teacher_detail", teacher_id=teacher_context))
-    return redirect(url_for("admin"))
+    return redirect(url_for("admin_classes"))
 
 
 @app.route("/admin/classes/<int:class_id>/delete", methods=["POST"])
@@ -1684,16 +1880,17 @@ def admin_delete_class(class_id):
 
     if teacher_context:
         return redirect(url_for("admin_teacher_detail", teacher_id=teacher_context))
-    return redirect(url_for("admin"))
+    return redirect(url_for("admin_classes"))
 
 
 def get_roster_for_date(conn, class_id, date_str):
     """Full roster of students *enrolled in this class* for one date, with
-    present/late/absent counts — an enrolled student with no attendance row
-    that day shows as 'absent'. A student not enrolled in this class never
-    appears here, even if they happen to have an old attendance row for it
-    (e.g. from before being unenrolled). Shared by /summary (today only)
-    and the teacher dashboard's history section (any past date)."""
+    present/late/excused/absent counts — an enrolled student with no
+    attendance row that day shows as 'absent'. A student not enrolled in
+    this class never appears here, even if they happen to have an old
+    attendance row for it (e.g. from before being unenrolled). Shared by
+    /summary (today only) and the teacher dashboard's history section
+    (any past date)."""
     roster = conn.execute(
         """
         SELECT st.student_id, st.first_name, st.last_name, st.section,
@@ -1711,8 +1908,9 @@ def get_roster_for_date(conn, class_id, date_str):
     ).fetchall()
     present_count = sum(1 for r in roster if r["status"] == "present")
     late_count = sum(1 for r in roster if r["status"] == "late")
+    excused_count = sum(1 for r in roster if r["status"] == "excused")
     absent_count = sum(1 for r in roster if r["status"] == "absent")
-    return roster, present_count, late_count, absent_count
+    return roster, present_count, late_count, excused_count, absent_count
 
 
 @app.route("/dashboard")
@@ -1742,7 +1940,7 @@ def dashboard():
 
     today_sessions = []
     for c in todays_classes:
-        roster, present_count, late_count, absent_count = get_roster_for_date(conn, c["class_id"], today)
+        roster, present_count, late_count, excused_count, absent_count = get_roster_for_date(conn, c["class_id"], today)
         ended_early = (c["class_id"], today) in _early_ended_sessions
         status = "Completed" if ended_early or now.strftime("%H:%M") >= c["end_time"] else \
                  "In progress" if now.strftime("%H:%M") >= c["start_time"] else "Not started"
@@ -1755,6 +1953,7 @@ def dashboard():
             "status": status,
             "present_count": present_count,
             "late_count": late_count,
+            "excused_count": excused_count,
             "absent_count": absent_count,
             "total": len(roster),
         })
@@ -1773,8 +1972,8 @@ def dashboard():
     history_dates = []
 
     if filter_class_id and filter_date:
-        history_roster, present_count, late_count, absent_count = get_roster_for_date(conn, filter_class_id, filter_date)
-        history_counts = {"present": present_count, "late": late_count, "absent": absent_count}
+        history_roster, present_count, late_count, excused_count, absent_count = get_roster_for_date(conn, filter_class_id, filter_date)
+        history_counts = {"present": present_count, "late": late_count, "excused": excused_count, "absent": absent_count}
     elif filter_class_id:
         total_students = conn.execute(
             "SELECT COUNT(*) AS c FROM enrollments WHERE class_id = ?", (filter_class_id,)
@@ -1783,7 +1982,8 @@ def dashboard():
             """
             SELECT date,
                    SUM(CASE WHEN status = 'present' THEN 1 ELSE 0 END) AS present_count,
-                   SUM(CASE WHEN status = 'late' THEN 1 ELSE 0 END) AS late_count
+                   SUM(CASE WHEN status = 'late' THEN 1 ELSE 0 END) AS late_count,
+                   SUM(CASE WHEN status = 'excused' THEN 1 ELSE 0 END) AS excused_count
             FROM attendance
             WHERE class_id = ?
             GROUP BY date
@@ -1796,7 +1996,8 @@ def dashboard():
                 "date": r["date"],
                 "present_count": r["present_count"],
                 "late_count": r["late_count"],
-                "absent_count": total_students - r["present_count"] - r["late_count"],
+                "excused_count": r["excused_count"],
+                "absent_count": total_students - r["present_count"] - r["late_count"] - r["excused_count"],
             }
             for r in rows
         ]
@@ -1814,6 +2015,299 @@ def dashboard():
         history_counts=history_counts,
         history_dates=history_dates,
         vapid_public_key=VAPID_PUBLIC_KEY,
+    )
+
+
+@app.route("/dashboard/sms_broadcast", methods=["POST"])
+@login_required(role="teacher")
+def dashboard_sms_broadcast():
+    """Lets a teacher send a one-off SMS to everyone enrolled in one of
+    their own classes — separate from the automatic notification triggers
+    (10-minute reminder, attendance opening, session ended), this is a
+    message the teacher writes themselves, whenever they want (e.g. "no
+    class today" or "bring your project files tomorrow"). The class and
+    teacher's name are prefixed onto the actual text sent, so a student
+    receiving it out of context (no app open, just a bare SMS) can still
+    tell at a glance who it's from and which class it's about — the
+    teacher only types the body."""
+    teacher_id = session["user_id"]
+    class_id = request.form.get("class_id", type=int)
+    message = request.form.get("message", "").strip()
+
+    conn = get_db()
+    class_row = conn.execute(
+        """
+        SELECT c.subject_name, t.first_name || ' ' || t.last_name AS teacher_name
+        FROM classes c
+        JOIN teachers t ON t.teacher_id = c.teacher_id
+        WHERE c.class_id = ? AND c.teacher_id = ?
+        """,
+        (class_id, teacher_id),
+    ).fetchone()
+
+    if not class_row:
+        flash("Pick one of your own classes to message.", "error")
+    elif not message:
+        flash("Enter a message to send.", "error")
+    else:
+        students = conn.execute(
+            """
+            SELECT s.phone_number
+            FROM enrollments e
+            JOIN students s ON s.student_id = e.student_id
+            WHERE e.class_id = ?
+            """,
+            (class_id,),
+        ).fetchall()
+        recipients = [s["phone_number"] for s in students if s["phone_number"]]
+        full_message = f"{class_row['teacher_name']} ({class_row['subject_name']}): {message}"
+        for phone_number in recipients:
+            send_sms_notification(phone_number, full_message)
+
+        no_phone_count = len(students) - len(recipients)
+        if not students:
+            flash(f"No students enrolled in {class_row['subject_name']}.", "error")
+        else:
+            note = f" ({no_phone_count} enrolled student(s) have no phone number on file.)" if no_phone_count else ""
+            flash(f"Sent to {len(recipients)} of {len(students)} students in {class_row['subject_name']}.{note}", "success")
+
+    conn.close()
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/dashboard/attendance/update", methods=["POST"])
+@login_required(role="teacher")
+def dashboard_attendance_update():
+    """Lets a teacher correct one student's attendance status for a past
+    (or today's) date in one of their own classes — used by both the
+    Attendance History section on /dashboard and a student's monthly log
+    on dashboard_student_monthly(). Unlike the live session_summary_edit
+    toggle (where absent means no row at all — there's nothing to
+    correct or look back on there, it's just the default before a tap),
+    an explicit correction here always writes a real row, absent
+    included: this is a teacher deliberately recording "yes, I checked,
+    this student was absent that day," not just an untouched gap, so it
+    stays visible and editable in these two logs instead of vanishing.
+    get_roster_for_date() and every other reader still treat a missing
+    row as absent too, so this doesn't change how absence displays
+    anywhere else — it only means an explicitly-reviewed day keeps a
+    record of having been reviewed."""
+    teacher_id = session["user_id"]
+    student_id = request.form.get("student_id", type=int)
+    class_id = request.form.get("class_id", type=int)
+    date_str = request.form.get("date", "").strip()
+    status = request.form.get("status", "").strip()
+    redirect_to = request.form.get("redirect_to", "").strip()
+    month = request.form.get("month", "").strip()
+
+    conn = get_db()
+    owns_class = conn.execute(
+        "SELECT 1 FROM classes WHERE class_id = ? AND teacher_id = ?", (class_id, teacher_id)
+    ).fetchone()
+    is_enrolled = conn.execute(
+        "SELECT 1 FROM enrollments WHERE student_id = ? AND class_id = ?", (student_id, class_id)
+    ).fetchone()
+
+    if not (owns_class and is_enrolled and date_str and status in SUMMARY_TOGGLE_CYCLE):
+        flash("Couldn't update that attendance record.", "error")
+    else:
+        existing = conn.execute(
+            "SELECT status FROM attendance WHERE student_id = ? AND class_id = ? AND date = ?",
+            (student_id, class_id, date_str),
+        ).fetchone()
+        if existing:
+            conn.execute(
+                "UPDATE attendance SET status = ? WHERE student_id = ? AND class_id = ? AND date = ?",
+                (status, student_id, class_id, date_str),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO attendance (student_id, class_id, date, time_tapped, status)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (student_id, class_id, date_str, datetime.now().strftime("%H:%M:%S"), status),
+            )
+        conn.commit()
+        flash("Attendance updated.", "success")
+    conn.close()
+
+    if redirect_to == "monthly":
+        return redirect(url_for("dashboard_student_monthly", class_id=class_id, student_id=student_id, month=month))
+    return redirect(url_for("dashboard", class_id=class_id, date=date_str))
+
+
+@app.route("/dashboard/classes/<int:class_id>")
+@login_required(role="teacher")
+def dashboard_class_roster(class_id):
+    """A teacher's own view of who's enrolled in one of their classes —
+    the "View" button next to each entry under My Classes on /dashboard.
+    Only reachable for a class actually assigned to this teacher."""
+    teacher_id = session["user_id"]
+    conn = get_db()
+    class_info = conn.execute(
+        """
+        SELECT c.*, t.first_name || ' ' || t.last_name AS teacher_name
+        FROM classes c
+        JOIN teachers t ON t.teacher_id = c.teacher_id
+        WHERE c.class_id = ? AND c.teacher_id = ?
+        """,
+        (class_id, teacher_id),
+    ).fetchone()
+    if not class_info:
+        conn.close()
+        flash("Class not found.", "error")
+        return redirect(url_for("dashboard"))
+
+    students = conn.execute(
+        """
+        SELECT st.student_id, st.first_name, st.last_name, st.section
+        FROM enrollments e
+        JOIN students st ON st.student_id = e.student_id
+        WHERE e.class_id = ?
+        ORDER BY st.last_name, st.first_name
+        """,
+        (class_id,),
+    ).fetchall()
+    conn.close()
+    return render_template(
+        "class_roster.html",
+        class_info=class_info,
+        students=students,
+        back_url=url_for("dashboard"),
+        back_label="Back to Dashboard",
+        can_view_monthly=True,
+    )
+
+
+@app.route("/dashboard/classes/<int:class_id>/students/<int:student_id>")
+@login_required(role="teacher")
+def dashboard_student_monthly(class_id, student_id):
+    """A teacher's per-student, per-month attendance summary for one of
+    their own classes — the "View" button next to each student on the
+    class roster page (/dashboard/classes/<id>). Only present/late/
+    excused/absent rows that actually exist in the attendance table
+    count toward the totals and the day-by-day log; a day with no row
+    for this student isn't assumed absent — the class might simply not
+    have been held/tracked that day — the same convention already used
+    for a student's own history on /student-dashboard."""
+    teacher_id = session["user_id"]
+    month = request.args.get("month", "").strip()
+    try:
+        month_date = datetime.strptime(month, "%Y-%m") if month else datetime.now()
+    except ValueError:
+        month_date = datetime.now()
+    month = month_date.strftime("%Y-%m")
+
+    conn = get_db()
+    class_info = conn.execute(
+        "SELECT * FROM classes WHERE class_id = ? AND teacher_id = ?",
+        (class_id, teacher_id),
+    ).fetchone()
+    if not class_info:
+        conn.close()
+        flash("Class not found.", "error")
+        return redirect(url_for("dashboard"))
+
+    student = conn.execute(
+        """
+        SELECT st.* FROM students st
+        JOIN enrollments e ON e.student_id = st.student_id
+        WHERE st.student_id = ? AND e.class_id = ?
+        """,
+        (student_id, class_id),
+    ).fetchone()
+    if not student:
+        conn.close()
+        flash("That student isn't enrolled in this class.", "error")
+        return redirect(url_for("dashboard_class_roster", class_id=class_id))
+
+    logs = conn.execute(
+        """
+        SELECT date, status, time_tapped
+        FROM attendance
+        WHERE student_id = ? AND class_id = ? AND date LIKE ?
+        ORDER BY date
+        """,
+        (student_id, class_id, f"{month}-%"),
+    ).fetchall()
+    conn.close()
+
+    counts = {"present": 0, "late": 0, "excused": 0, "absent": 0}
+    for row in logs:
+        counts[row["status"]] += 1
+
+    first_of_month = month_date.replace(day=1)
+    prev_month = (first_of_month - timedelta(days=1)).strftime("%Y-%m")
+    next_month = (first_of_month + timedelta(days=32)).replace(day=1).strftime("%Y-%m")
+
+    return render_template(
+        "dashboard_student_monthly.html",
+        class_info=class_info,
+        student=student,
+        month=month,
+        month_label=month_date.strftime("%B %Y"),
+        prev_month=prev_month,
+        next_month=next_month,
+        logs=logs,
+        counts=counts,
+    )
+
+
+@app.route("/admin/classes/<int:class_id>/students")
+@login_required(role="admin")
+def admin_class_roster(class_id):
+    """Admin's view of who's enrolled in one class — the "View Students"
+    button both on the main Classes table and on each class card in a
+    teacher's admin detail page. Shares the same template as
+    dashboard_class_roster(), just without the ownership restriction (an
+    admin can look at any class).
+
+    The ?source= query param says which of those two pages linked here,
+    so "back" returns to the right one — it can't be inferred from the
+    class's own data (e.g. whether it has a teacher), since either page
+    can link to the same class."""
+    conn = get_db()
+    class_info = conn.execute(
+        """
+        SELECT c.*, t.first_name || ' ' || t.last_name AS teacher_name
+        FROM classes c
+        LEFT JOIN teachers t ON t.teacher_id = c.teacher_id
+        WHERE c.class_id = ?
+        """,
+        (class_id,),
+    ).fetchone()
+    if not class_info:
+        conn.close()
+        flash("Class not found.", "error")
+        return redirect(url_for("admin_classes"))
+
+    students = conn.execute(
+        """
+        SELECT st.student_id, st.first_name, st.last_name, st.section
+        FROM enrollments e
+        JOIN students st ON st.student_id = e.student_id
+        WHERE e.class_id = ?
+        ORDER BY st.last_name, st.first_name
+        """,
+        (class_id,),
+    ).fetchall()
+    conn.close()
+
+    source = request.args.get("source")
+    if source == "teacher" and class_info["teacher_id"]:
+        back_url = url_for("admin_teacher_detail", teacher_id=class_info["teacher_id"])
+        back_label = "Back to Teacher"
+    else:
+        back_url = url_for("admin_classes")
+        back_label = "Back to Classes"
+
+    return render_template(
+        "class_roster.html",
+        class_info=class_info,
+        students=students,
+        back_url=back_url,
+        back_label=back_label,
     )
 
 
@@ -1902,7 +2396,7 @@ def summary():
         selected_class_id = classes[0]["class_id"]
 
     roster = []
-    present_count = late_count = absent_count = 0
+    present_count = late_count = excused_count = absent_count = 0
     selected_class = None
 
     if selected_class_id:
@@ -1916,7 +2410,7 @@ def summary():
             (selected_class_id,),
         ).fetchone()
 
-        roster, present_count, late_count, absent_count = get_roster_for_date(
+        roster, present_count, late_count, excused_count, absent_count = get_roster_for_date(
             conn, selected_class_id, date.today().isoformat()
         )
 
@@ -1928,6 +2422,7 @@ def summary():
         roster=roster,
         present_count=present_count,
         late_count=late_count,
+        excused_count=excused_count,
         absent_count=absent_count,
         today=date.today().isoformat(),
     )

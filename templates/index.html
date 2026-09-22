@@ -153,8 +153,9 @@
                 const expiresAt = new Date(state.summary_expires_at).getTime();
                 const remainingSec = Math.max(0, Math.ceil((expiresAt - serverNow()) / 1000));
                 const toggles = (state.roster || []).map((s) => `
-                    <button class="roster-toggle ${s.present ? "present" : "absent"}" data-student-id="${s.student_id}">
+                    <button class="roster-toggle ${s.status}" data-student-id="${s.student_id}">
                         ${escapeHtml(s.name)}
+                        <small>${s.status.toUpperCase()}</small>
                     </button>
                 `).join("");
                 const editCancelButton = state.is_early_end
@@ -163,7 +164,7 @@
                 root.innerHTML = `
                     <div class="stage-summary">
                         <h2>Edit Attendance</h2>
-                        <p class="hint">Tap a student to toggle present / absent.</p>
+                        <p class="hint">Tap a student to cycle: absent &rarr; present &rarr; late &rarr; excused.</p>
                         <div class="roster-toggle-grid">${toggles}</div>
                         <div class="confirm-buttons">
                             <button id="summary-save" class="btn-yes">Confirm &amp; Continue</button>

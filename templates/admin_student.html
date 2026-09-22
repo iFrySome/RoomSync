@@ -2,7 +2,7 @@
 {% block title %}RoomSync - {{ student.first_name }} {{ student.last_name }}{% endblock %}
 
 {% block content %}
-<p class="meta"><a href="{{ url_for('admin') }}">&larr; Back to Admin</a></p>
+<p class="meta"><a href="{{ url_for('admin_students') }}">&larr; Back to Students</a></p>
 <h1>{{ student.first_name }} {{ student.last_name }}</h1>
 <p class="meta">Login Username: {{ student.username or "—" }}</p>
 

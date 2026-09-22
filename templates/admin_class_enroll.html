@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}RoomSync - Enroll Students - {{ class_info.subject_name }}{% endblock %}
+
+{% block content %}
+<p class="meta"><a href="{{ url_for('admin_classes') }}">&larr; Back to Classes</a></p>
+<h1>Enroll Students</h1>
+<p class="meta">
+    {{ class_info.subject_name }} &middot; {{ class_info.teacher_name or "Unassigned" }}
+    &middot; Room {{ class_info.room_number or "—" }}
+    &middot; {{ (class_info.start_time ~ "–" ~ class_info.end_time) if (class_info.start_time and class_info.end_time) else "time not set" }}
+</p>
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+    <div class="flash flash-{{ category }}">{{ message }}</div>
+    {% endfor %}
+{% endwith %}
+
+<section class="admin-section">
+    <h2>Currently Enrolled</h2>
+    <table class="roster-table admin-table">
+        <thead>
+            <tr><th>First Name</th><th>Last Name</th><th>Section</th><th></th></tr>
+        </thead>
+        <tbody>
+            {% for s in enrolled %}
+            <tr>
+                <td>{{ s.first_name }}</td>
+                <td>{{ s.last_name }}</td>
+                <td>{{ s.section }}</td>
+                <td class="admin-actions">
+                    <form method="POST" action="{{ url_for('admin_unenroll_student', student_id=s.student_id) }}"
+                          class="inline-form" onsubmit="return confirm('Remove {{ s.first_name }} from {{ class_info.subject_name }}? Their attendance history for it is kept.');">
+                        <input type="hidden" name="class_id" value="{{ class_info.class_id }}">
+                        <input type="hidden" name="class_context" value="{{ class_info.class_id }}">
+                        <button type="submit" class="btn-delete">Unenroll</button>
+                    </form>
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="4">No students enrolled yet.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <h3>Enroll a Student</h3>
+    {% if not class_info.start_time or not class_info.end_time %}
+    <p class="meta">This class has no schedule set yet — assign it a room and time from the Classes page before enrolling students.</p>
+    {% elif enrollable_students %}
+    <form method="POST" action="{{ url_for('admin_class_enroll_add', class_id=class_info.class_id) }}" class="admin-add-form">
+        <select name="student_id" required>
+            <option value="" disabled selected>Student</option>
+            {% for s in enrollable_students %}
+            <option value="{{ s.student_id }}">{{ s.first_name }} {{ s.last_name }} ({{ s.section }})</option>
+            {% endfor %}
+        </select>
+        <button type="submit">Enroll</button>
+    </form>
+    {% else %}
+    <p class="meta">Every student is already enrolled in this class.</p>
+    {% endif %}
+</section>
+{% endblock %}

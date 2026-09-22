@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}RoomSync - Classes{% endblock %}
+
+{% block content %}
+<p class="meta"><a href="{{ url_for('admin') }}">&larr; Back to Admin</a></p>
+<h1>Classes</h1>
+<p class="meta">{{ classes|length }} total</p>
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+    <div class="flash flash-{{ category }}">{{ message }}</div>
+    {% endfor %}
+{% endwith %}
+
+<section class="admin-section">
+    <table class="roster-table admin-table">
+        <thead>
+            <tr><th>Subject</th><th>Teacher</th><th>Room</th><th>Start</th><th>End</th><th>Window (min)</th><th></th></tr>
+        </thead>
+        <tbody>
+            {% for c in classes %}
+            <tr>
+                <td>{{ c.subject_name }}</td>
+                <td>{{ c.teacher_name or "Unassigned" }}</td>
+                <td>{{ c.room_number or "—" }}</td>
+                <td>{{ c.start_time or "—" }}</td>
+                <td>{{ c.end_time or "—" }}</td>
+                <td>{{ c.attendance_window_minutes }}</td>
+                <td class="admin-actions">
+                    <a href="{{ url_for('admin_class_roster', class_id=c.class_id, source='classes') }}" class="btn-view btn-view-students">View Students</a>
+                    <a href="{{ url_for('admin_class_enroll', class_id=c.class_id) }}" class="btn-view">Enroll Students</a>
+                    <form method="POST" action="{{ url_for('admin_delete_class', class_id=c.class_id) }}"
+                          class="inline-form" onsubmit="return confirm('Delete this class? This also removes its attendance records and enrollments.');">
+                        <button type="submit" class="btn-delete">Delete</button>
+                    </form>
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="7">No classes yet.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <h3>Add a Class</h3>
+    <p class="meta">
+        Just the subject name — no teacher, room, or time yet. Assign it
+        below once you're ready.
+    </p>
+    <form method="POST" action="{{ url_for('admin_add_class') }}" class="admin-add-form">
+        <input name="subject_name" placeholder="Subject Name" required>
+        <button type="submit">Add Class</button>
+    </form>
+
+    <h3>Assign Class</h3>
+    <p class="meta">
+        Pick a subject, a teacher, and a schedule. If that teacher — or a
+        different one — already teaches this subject, this adds a new
+        section instead of overwriting their existing one, as long as the
+        schedule doesn't conflict.
+    </p>
+    {% if subjects and teachers %}
+    <form method="POST" action="{{ url_for('admin_assign_class') }}" class="admin-add-form">
+        <select name="subject_name" required>
+            <option value="" disabled selected>Class</option>
+            {% for subject in subjects %}
+            <option value="{{ subject }}">{{ subject }}</option>
+            {% endfor %}
+        </select>
+        <select name="teacher_id" required>
+            <option value="" disabled selected>Teacher</option>
+            {% for t in teachers %}
+            <option value="{{ t.teacher_id }}">{{ t.first_name }} {{ t.last_name }}</option>
+            {% endfor %}
+        </select>
+        <select name="room_number">
+            <option value="" selected>No room yet</option>
+            {% for r in rooms %}
+            <option value="{{ r.room_name }}">{{ r.room_name }}</option>
+            {% endfor %}
+        </select>
+        <input type="time" name="start_time">
+        <input type="time" name="end_time">
+        <input type="number" min="1" name="attendance_window_minutes" value="15" placeholder="Window (min)">
+        <button type="submit">Assign</button>
+    </form>
+    {% elif not subjects %}
+    <p class="meta">Add a class first before assigning it.</p>
+    {% else %}
+    <p class="meta">Add a teacher first before assigning a class.</p>
+    {% endif %}
+</section>
+{% endblock %}

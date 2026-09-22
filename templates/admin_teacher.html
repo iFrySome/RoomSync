@@ -2,7 +2,7 @@
 {% block title %}RoomSync - {{ teacher.first_name }} {{ teacher.last_name }}{% endblock %}
 
 {% block content %}
-<p class="meta"><a href="{{ url_for('admin') }}">&larr; Back to Admin</a></p>
+<p class="meta"><a href="{{ url_for('admin_teachers') }}">&larr; Back to Teachers</a></p>
 <h1>{{ teacher.first_name }} {{ teacher.last_name }}</h1>
 <p class="meta">RFID Tag: {{ teacher.rfid_tag }}</p>
 
@@ -36,6 +36,7 @@
         <input form="class-form-{{ c.class_id }}" type="time" name="end_time" value="{{ c.end_time or '' }}">
         <input form="class-form-{{ c.class_id }}" type="number" min="1" name="attendance_window_minutes" value="{{ c.attendance_window_minutes }}" title="Attendance window (minutes)">
         <button form="class-form-{{ c.class_id }}" type="submit" class="btn-save">Save</button>
+        <a href="{{ url_for('admin_class_roster', class_id=c.class_id, source='teacher') }}" class="btn-view btn-view-students">View Students</a>
         <form method="POST" action="{{ url_for('admin_delete_class', class_id=c.class_id) }}" class="inline-form"
               onsubmit="return confirm('Delete this class? This also removes its attendance records and enrollments.');">
             <input type="hidden" name="teacher_context" value="{{ teacher.teacher_id }}">

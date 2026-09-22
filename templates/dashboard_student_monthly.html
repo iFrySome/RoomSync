@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}RoomSync - {{ student.first_name }} {{ student.last_name }} - {{ month_label }}{% endblock %}
+
+{% block content %}
+<p class="meta"><a href="{{ url_for('dashboard_class_roster', class_id=class_info.class_id) }}">&larr; Back to {{ class_info.subject_name }}</a></p>
+<h1>{{ student.first_name }} {{ student.last_name }}</h1>
+<p class="meta">{{ student.section }} &middot; {{ class_info.subject_name }}</p>
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+    <div class="flash flash-{{ category }}">{{ message }}</div>
+    {% endfor %}
+{% endwith %}
+
+<div class="class-picker">
+    <a href="{{ url_for('dashboard_student_monthly', class_id=class_info.class_id, student_id=student.student_id, month=prev_month) }}" class="btn-view">&larr; Prev</a>
+    <form method="GET" style="display: inline;">
+        <input type="month" name="month" value="{{ month }}" onchange="this.form.submit()">
+    </form>
+    <a href="{{ url_for('dashboard_student_monthly', class_id=class_info.class_id, student_id=student.student_id, month=next_month) }}" class="btn-view">Next &rarr;</a>
+    <strong style="margin-left: 10px;">{{ month_label }}</strong>
+</div>
+
+<div class="summary-stats" style="margin-top: 20px;">
+    <div class="stat stat-present">Present<span>{{ counts.present }}</span></div>
+    <div class="stat stat-late">Late<span>{{ counts.late }}</span></div>
+    <div class="stat stat-excused">Excused<span>{{ counts.excused }}</span></div>
+    <div class="stat stat-absent">Absent<span>{{ counts.absent }}</span></div>
+</div>
+
+<p class="meta" style="margin-top: 20px;">Change a status to correct it. Only days shown here have any attendance record at all — a day that isn't listed means it was never tracked (the class may not have been held, or the window wasn't opened), not that this student was marked absent.</p>
+<table class="roster-table">
+    <thead>
+        <tr><th>Date</th><th>Status</th><th>Time Tapped</th></tr>
+    </thead>
+    <tbody>
+        {% for r in logs %}
+        <tr>
+            <td>{{ r.date }}</td>
+            <td>
+                <form method="POST" action="{{ url_for('dashboard_attendance_update') }}" class="status-edit-form">
+                    <input type="hidden" name="student_id" value="{{ student.student_id }}">
+                    <input type="hidden" name="class_id" value="{{ class_info.class_id }}">
+                    <input type="hidden" name="date" value="{{ r.date }}">
+                    <input type="hidden" name="redirect_to" value="monthly">
+                    <input type="hidden" name="month" value="{{ month }}">
+                    <select name="status" class="status-select status-{{ r.status }}" onchange="this.form.submit()">
+                        <option value="present" {% if r.status == "present" %}selected{% endif %}>PRESENT</option>
+                        <option value="late" {% if r.status == "late" %}selected{% endif %}>LATE</option>
+                        <option value="excused" {% if r.status == "excused" %}selected{% endif %}>EXCUSED</option>
+                        <option value="absent" {% if r.status == "absent" %}selected{% endif %}>ABSENT</option>
+                    </select>
+                </form>
+            </td>
+            <td>{{ r.time_tapped or "-" }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="3">No attendance recorded for this student in {{ month_label }}.</td></tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}RoomSync - Rooms{% endblock %}
+
+{% block content %}
+<p class="meta"><a href="{{ url_for('admin') }}">&larr; Back to Admin</a></p>
+<h1>Rooms</h1>
+<p class="meta">{{ rooms|length }} total</p>
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+    <div class="flash flash-{{ category }}">{{ message }}</div>
+    {% endfor %}
+{% endwith %}
+
+<section class="admin-section">
+    <table class="roster-table admin-table">
+        <thead>
+            <tr><th>Room</th><th></th></tr>
+        </thead>
+        <tbody>
+            {% for r in rooms %}
+            <tr>
+                <td>{{ r.room_name }}</td>
+                <td class="admin-actions">
+                    <form method="POST" action="{{ url_for('admin_delete_room', room_id=r.room_id) }}"
+                          class="inline-form" onsubmit="return confirm('Delete this room?');">
+                        <button type="submit" class="btn-delete">Delete</button>
+                    </form>
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="2">No rooms yet.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <h3>Add a Room</h3>
+    <p class="meta">
+        There's no separate "Assign Room" step — a room is put to use by
+        picking it from the room dropdown when assigning a class.
+    </p>
+    <form method="POST" action="{{ url_for('admin_add_room') }}" class="admin-add-form">
+        <input name="room_name" placeholder="Room Name (e.g. Room 301)" required>
+        <button type="submit">Add Room</button>
+    </form>
+</section>
+{% endblock %}

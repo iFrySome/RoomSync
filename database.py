@@ -92,7 +92,7 @@ CREATE TABLE attendance (
     class_id      INTEGER NOT NULL,
     date          TEXT NOT NULL,  -- YYYY-MM-DD
     time_tapped   TEXT NOT NULL,  -- HH:MM:SS
-    status        TEXT NOT NULL CHECK (status IN ('present', 'late', 'absent')),
+    status        TEXT NOT NULL CHECK (status IN ('present', 'late', 'absent', 'excused')),
     FOREIGN KEY (student_id) REFERENCES students (student_id),
     FOREIGN KEY (class_id) REFERENCES classes (class_id)
 );

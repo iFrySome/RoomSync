@@ -11,6 +11,7 @@
     --green: #15803d;
     --yellow: #b45309;
     --red: #c8102e;
+    --blue: #2563eb;
     --radius: 10px;
 }
 
@@ -128,6 +129,21 @@ body {
 .pill-present { background: rgba(21, 128, 61, 0.12); color: var(--green); }
 .pill-late { background: rgba(180, 83, 9, 0.12); color: var(--yellow); }
 .pill-absent { background: var(--accent-soft); color: var(--red); }
+.pill-excused { background: rgba(37, 99, 235, 0.12); color: var(--blue); }
+
+.status-edit-form { display: inline-block; }
+.status-select {
+    padding: 4px 8px;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    font-weight: 700;
+    font-size: 0.75rem;
+    cursor: pointer;
+}
+.status-select.status-present { background: rgba(21, 128, 61, 0.12); color: var(--green); }
+.status-select.status-late { background: rgba(180, 83, 9, 0.12); color: var(--yellow); }
+.status-select.status-absent { background: var(--accent-soft); color: var(--red); }
+.status-select.status-excused { background: rgba(37, 99, 235, 0.12); color: var(--blue); }
 
 .flash {
     padding: 12px 16px;
@@ -231,6 +247,7 @@ body {
 .stat-present span { color: var(--green); }
 .stat-late span { color: var(--yellow); }
 .stat-absent span { color: var(--red); }
+.stat-excused span { color: var(--blue); }
 
 .quick-tap.teacher button {
     background: var(--accent);
@@ -360,7 +377,11 @@ body {
     cursor: pointer;
     transition: background 0.2s, border-color 0.2s, color 0.2s;
 }
+.roster-toggle small { display: block; font-weight: 700; font-size: 0.7rem; letter-spacing: 0.04em; opacity: 0.85; }
+.roster-toggle.absent { background: var(--accent-soft); border-color: var(--red); color: var(--text); }
 .roster-toggle.present { background: var(--green); border-color: var(--green); color: #ffffff; }
+.roster-toggle.late { background: var(--yellow); border-color: var(--yellow); color: #ffffff; }
+.roster-toggle.excused { background: var(--blue); border-color: var(--blue); color: #ffffff; }
 
 /* --- Login page --- */
 
@@ -441,6 +462,36 @@ body {
     margin-bottom: 28px;
 }
 
+.admin-hub-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 16px;
+    margin-top: 20px;
+}
+
+.admin-hub-card {
+    display: block;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 24px;
+    text-decoration: none;
+    color: var(--text);
+    transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.admin-hub-card:hover {
+    border-color: var(--accent);
+    transform: translateY(-2px);
+}
+
+.admin-hub-card h2 {
+    margin: 0 0 6px;
+    font-size: 1.3rem;
+}
+
+.admin-hub-card .meta { margin: 0; }
+
 .admin-section h2 { margin-top: 0; }
 .admin-section h3 { color: var(--muted); font-size: 1rem; text-transform: uppercase; letter-spacing: 0.04em; margin: 20px 0 10px; }
 
@@ -461,6 +512,13 @@ body {
     font-size: 0.75rem;
     color: var(--muted);
 }
+
+.rfid-capture-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+.rfid-capture-group .rfid-register-status { flex-basis: auto; }
 .rfid-register-status.rfid-register-success { color: var(--green); }
 .rfid-register-status.rfid-register-error { color: var(--red); }
 
@@ -486,6 +544,8 @@ body {
     text-decoration: none;
 }
 
+.btn-view.btn-view-students { background: var(--green); }
+
 .inline-form { display: inline; }
 
 .reset-password-form { display: flex; gap: 8px; padding: 6px 0; }
@@ -498,7 +558,7 @@ body {
     align-items: center;
 }
 
-.admin-add-form input, .admin-add-form select {
+.admin-add-form input, .admin-add-form select, .admin-add-form textarea {
     padding: 10px 12px;
     border-radius: var(--radius);
     border: 1px solid var(--panel-light);
@@ -507,6 +567,12 @@ body {
     font-size: 0.9rem;
     flex: 1;
     min-width: 140px;
+    font-family: inherit;
+}
+
+.admin-add-form textarea {
+    flex-basis: 100%;
+    resize: vertical;
 }
 
 .class-card { background: var(--panel-light); }
