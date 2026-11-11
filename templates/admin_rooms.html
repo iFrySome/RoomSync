@@ -1,47 +1,51 @@
 {% extends "base.html" %}
+{% from "_macros.html" import breadcrumbs %}
 {% block title %}RoomSync - Rooms{% endblock %}
 
 {% block content %}
-<p class="meta"><a href="{{ url_for('admin') }}">&larr; Back to Admin</a></p>
-<h1>Rooms</h1>
-<p class="meta">{{ rooms|length }} total</p>
-
-{% with messages = get_flashed_messages(with_categories=true) %}
-    {% for category, message in messages %}
-    <div class="flash flash-{{ category }}">{{ message }}</div>
-    {% endfor %}
-{% endwith %}
+{{ breadcrumbs([("Admin", url_for('admin')), ("Rooms", None)]) }}
+<div class="page-header">
+    <div>
+        <h1>Rooms</h1>
+        <p class="meta">{{ rooms|length }} total</p>
+    </div>
+</div>
 
 <section class="admin-section">
-    <table class="roster-table admin-table">
+    <div class="table-wrap">
+    <table class="roster-table">
         <thead>
             <tr><th>Room</th><th></th></tr>
         </thead>
         <tbody>
             {% for r in rooms %}
             <tr>
-                <td>{{ r.room_name }}</td>
-                <td class="admin-actions">
+                <td class="cell-strong">{{ r.room_name }}</td>
+                <td class="cell-actions">
                     <form method="POST" action="{{ url_for('admin_delete_room', room_id=r.room_id) }}"
-                          class="inline-form" onsubmit="return confirm('Delete this room?');">
+                          class="inline-form" onsubmit='return confirm({{ ("Delete " ~ r.room_name ~ "?")|tojson }});'>
                         <button type="submit" class="btn-delete">Delete</button>
                     </form>
                 </td>
             </tr>
             {% else %}
-            <tr><td colspan="2">No rooms yet.</td></tr>
+            <tr><td colspan="2" class="cell-empty">No rooms yet.</td></tr>
             {% endfor %}
         </tbody>
     </table>
+    </div>
+</section>
 
-    <h3>Add a Room</h3>
-    <p class="meta">
-        There's no separate "Assign Room" step — a room is put to use by
-        picking it from the room dropdown when assigning a class.
-    </p>
-    <form method="POST" action="{{ url_for('admin_add_room') }}" class="admin-add-form">
-        <input name="room_name" placeholder="Room Name (e.g. Room 301)" required>
-        <button type="submit">Add Room</button>
+<section class="admin-section">
+    <h2>Add Room</h2>
+    <form method="POST" action="{{ url_for('admin_add_room') }}" class="form-grid">
+        <div class="field field-wide">
+            <label for="add-room-name">Room Name</label>
+            <input name="room_name" id="add-room-name" required>
+        </div>
+        <div class="field field-action">
+            <button type="submit" class="btn btn-primary">Add Room</button>
+        </div>
     </form>
 </section>
 {% endblock %}

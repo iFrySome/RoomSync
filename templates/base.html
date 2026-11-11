@@ -7,30 +7,135 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
+    {#- Each role only sees the pages it can actually use. Each entry is
+        (endpoint, label, endpoints that highlight it) — the last list
+        keeps a section's link highlighted on its sub-pages too. -#}
+    {%- set role = session.get('role') -%}
+    {%- if role == 'admin' -%}
+        {%- set home_url = url_for('admin') -%}
+        {%- set nav_items = [
+            ('admin', 'Home', ['admin']),
+            ('admin_teachers', 'Teachers', ['admin_teachers', 'admin_teacher_detail']),
+            ('admin_students', 'Students', ['admin_students', 'admin_student_detail']),
+            ('admin_classes', 'Classes', ['admin_classes', 'admin_class_roster', 'admin_class_enroll']),
+            ('admin_rooms', 'Rooms', ['admin_rooms']),
+            ('summary', "Today's Summary", ['summary']),
+            ('index', 'Display', ['index']),
+            ('kiosk', 'RFID Kiosk', ['kiosk']),
+        ] -%}
+    {%- elif role == 'teacher' -%}
+        {%- set home_url = url_for('dashboard') -%}
+        {%- set nav_items = [
+            ('dashboard', 'My Dashboard', ['dashboard', 'dashboard_class_roster']),
+            ('dashboard_attendance', 'Attendance Records', ['dashboard_attendance', 'dashboard_student_attendance']),
+            ('index', 'Display', ['index']),
+        ] -%}
+    {%- elif role == 'student' -%}
+        {%- set home_url = url_for('student_dashboard') -%}
+        {%- set nav_items = [
+            ('student_dashboard', 'My Dashboard', ['student_dashboard']),
+        ] -%}
+    {%- else -%}
+        {%- set home_url = url_for('index') -%}
+        {%- set nav_items = [
+            ('index', 'Display', ['index']),
+            ('kiosk', 'RFID Kiosk', ['kiosk']),
+            ('summary', "Today's Summary", ['summary']),
+        ] -%}
+    {%- endif %}
     <nav class="navbar">
-        <div class="navbar-brand">RoomSync</div>
+        <a class="navbar-brand" href="{{ home_url }}">RoomSync</a>
         <div class="navbar-links">
-            <a href="{{ url_for('index') }}">Schedule Display</a>
-            <a href="{{ url_for('kiosk') }}">Simulated RFID Kiosk</a>
-            <a href="{{ url_for('summary') }}">Attendance Summary</a>
-            {% if session.get('role') == 'teacher' %}
-            <a href="{{ url_for('dashboard') }}">My Dashboard</a>
-            {% endif %}
-            {% if session.get('role') == 'student' %}
-            <a href="{{ url_for('student_dashboard') }}">My Dashboard</a>
-            {% endif %}
-            {% if session.get('role') == 'admin' %}
-            <a href="{{ url_for('admin') }}">Admin</a>
-            {% endif %}
-            {% if session.get('role') %}
-            <a href="{{ url_for('logout') }}">Logout</a>
+            {% for endpoint, label, active_on in nav_items %}
+            {% set is_active = request.endpoint in active_on %}
+            <a href="{{ url_for(endpoint) }}" class="{{ 'active' if is_active else '' }}"{% if is_active %} aria-current="page"{% endif %}>{{ label }}</a>
+            {% endfor %}
+        </div>
+        <div class="navbar-user">
+            {% if role %}
+            <span class="user-chip">{{ session.get('display_name') or role|title }}<small>{{ role|title }}</small></span>
+            <a href="{{ url_for('logout') }}" class="btn-nav">Logout</a>
             {% else %}
-            <a href="{{ url_for('login') }}">Login</a>
+            <a href="{{ url_for('login') }}" class="btn-nav">Login</a>
             {% endif %}
         </div>
     </nav>
     <main class="container">
+        {% block flashes %}
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% for category, message in messages %}
+            <div class="flash flash-{{ category }}" role="status">
+                <span>{{ message }}</span>
+                <button type="button" class="flash-close" aria-label="Dismiss">&times;</button>
+            </div>
+            {% endfor %}
+        {% endwith %}
+        {% endblock %}
         {% block content %}{% endblock %}
     </main>
+    <script>
+        // Flash messages: the × closes one; success messages also fade
+        // out on their own after a few seconds. Errors stay until closed.
+        document.querySelectorAll(".flash").forEach((el) => {
+            const dismiss = () => {
+                el.style.opacity = "0";
+                setTimeout(() => el.remove(), 300);
+            };
+            const closeBtn = el.querySelector(".flash-close");
+            if (closeBtn) closeBtn.addEventListener("click", dismiss);
+            if (closeBtn && el.classList.contains("flash-success")) setTimeout(dismiss, 6000);
+        });
+
+        // Popups: <button data-open-dialog="<dialog id>"> opens a
+        // <dialog class="modal">; anything with data-close-dialog inside it,
+        // Esc, or a click on the dimmed background closes it.
+        document.querySelectorAll("[data-open-dialog]").forEach((btn) => {
+            const dialog = document.getElementById(btn.dataset.openDialog);
+            if (dialog) btn.addEventListener("click", () => dialog.showModal());
+        });
+        document.querySelectorAll("dialog.modal").forEach((dialog) => {
+            dialog.querySelectorAll("[data-close-dialog]").forEach((el) => {
+                el.addEventListener("click", () => dialog.close());
+            });
+            dialog.addEventListener("click", (event) => {
+                if (event.target === dialog) dialog.close();
+            });
+        });
+
+        // Search box above a table: <input class="table-search" data-table="<table id>">
+        // hides rows that don't contain the typed text.
+        document.querySelectorAll("input.table-search").forEach((input) => {
+            const table = document.getElementById(input.dataset.table);
+            if (!table) return;
+            const rows = Array.from(table.tBodies[0].rows).filter((r) => !r.querySelector(".cell-empty"));
+            const noMatch = table.tBodies[0].insertRow();
+            noMatch.hidden = true;
+            const cell = noMatch.insertCell();
+            cell.colSpan = table.tHead.rows[0].cells.length;
+            cell.className = "cell-empty";
+            cell.textContent = "No matches.";
+            input.addEventListener("input", () => {
+                const q = input.value.trim().toLowerCase();
+                let shown = 0;
+                rows.forEach((row) => {
+                    const match = !q || row.textContent.toLowerCase().includes(q);
+                    row.hidden = !match;
+                    if (match) shown++;
+                });
+                noMatch.hidden = shown > 0 || rows.length === 0;
+            });
+        });
+
+        // 24-hour time fields (time_input in _macros.html): tidy loose
+        // entries into HH:MM as soon as the field loses focus — "8:00" ->
+        // "08:00", "1330" -> "13:30" — so what's shown always matches the
+        // format used everywhere else. app.py normalizes the same way.
+        document.querySelectorAll("input.time-24h").forEach((input) => {
+            input.addEventListener("blur", () => {
+                const match = input.value.trim().match(/^([01]?\d|2[0-3]):?([0-5]\d)$/);
+                if (match) input.value = `${match[1].padStart(2, "0")}:${match[2]}`;
+            });
+        });
+    </script>
 </body>
 </html>

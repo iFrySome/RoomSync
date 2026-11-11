@@ -2,15 +2,9 @@
 {% block title %}RoomSync - Simulated RFID Kiosk{% endblock %}
 
 {% block content %}
-<h1>Simulated RFID Tap</h1>
-<p class="meta">
-    No RC522 reader connected yet. Type a tag ID below or click a sample
-    teacher's/student's button to simulate a tap, just like waving a card
-    over the reader would on the real Raspberry Pi setup.
-</p>
-
-<div class="card small">
-    Main display is currently showing: <strong>{{ display_state.stage.replace('_', ' ')|title }}</strong>
+<div class="page-header">
+    <h1>RFID Kiosk</h1>
+    <span class="status-chip">Display: <strong>{{ display_state.stage.replace('_', ' ')|title }}</strong></span>
 </div>
 
 {% if message %}
@@ -23,31 +17,38 @@
 <script>document.addEventListener("DOMContentLoaded", () => playTapBeep("negative"));</script>
 {% endif %}
 
-<form method="POST" class="tap-form">
-    <label for="rfid_tag">RFID Tag ID</label>
-    <input type="text" id="rfid_tag" name="rfid_tag" placeholder="e.g. 04A1B2C3" autofocus autocomplete="off">
-    <button type="submit">Simulate Tap</button>
-</form>
-
-<h2>Quick-Tap Sample Teachers</h2>
-<div class="button-grid">
-    {% for t in sample_teachers %}
-    <form method="POST" class="quick-tap teacher">
-        <input type="hidden" name="rfid_tag" value="{{ t.rfid_tag }}">
-        <button type="submit">{{ t.first_name }} {{ t.last_name }}<br><small>{{ t.rfid_tag }}</small></button>
+<section class="admin-section">
+    <form method="POST" class="tap-form">
+        <input type="text" id="rfid_tag" name="rfid_tag" placeholder="RFID tag ID" aria-label="RFID tag ID" autofocus autocomplete="off" required>
+        <button type="submit">Tap</button>
     </form>
-    {% endfor %}
-</div>
+</section>
 
-<h2>Quick-Tap Sample Students</h2>
-<div class="button-grid">
-    {% for s in sample_students %}
-    <form method="POST" class="quick-tap">
-        <input type="hidden" name="rfid_tag" value="{{ s.rfid_tag }}">
-        <button type="submit">{{ s.first_name }} {{ s.last_name }}<br><small>{{ s.rfid_tag }}</small></button>
-    </form>
-    {% endfor %}
-</div>
+<section class="admin-section">
+    <h2>Teachers</h2>
+    <div class="button-grid">
+        {% for t in sample_teachers %}
+        <form method="POST" class="quick-tap teacher">
+            <input type="hidden" name="rfid_tag" value="{{ t.rfid_tag }}">
+            <button type="submit">{{ t.first_name }} {{ t.last_name }}<br><small>{{ t.rfid_tag }}</small></button>
+        </form>
+        {% else %}
+        <p class="empty-state">No teachers yet.</p>
+        {% endfor %}
+    </div>
+
+    <h2>Students</h2>
+    <div class="button-grid">
+        {% for s in sample_students %}
+        <form method="POST" class="quick-tap">
+            <input type="hidden" name="rfid_tag" value="{{ s.rfid_tag }}">
+            <button type="submit">{{ s.first_name }} {{ s.last_name }}<br><small>{{ s.rfid_tag }}</small></button>
+        </form>
+        {% else %}
+        <p class="empty-state">No students yet.</p>
+        {% endfor %}
+    </div>
+</section>
 
 <script>
     // Synthesizes tap feedback beeps with the Web Audio API so no audio

@@ -2,31 +2,30 @@
 {% block title %}RoomSync - Administrator{% endblock %}
 
 {% block content %}
-<h1>Administrator</h1>
-<p class="meta">Pick a section to manage.</p>
-
-{% with messages = get_flashed_messages(with_categories=true) %}
-    {% for category, message in messages %}
-    <div class="flash flash-{{ category }}">{{ message }}</div>
-    {% endfor %}
-{% endwith %}
+<div class="page-header">
+    <h1>Administrator</h1>
+</div>
 
 <div class="admin-hub-grid">
     <a href="{{ url_for('admin_teachers') }}" class="admin-hub-card">
         <h2>Teachers</h2>
-        <p class="meta">Add, edit, delete, register RFID cards, reset passwords.</p>
+        <span class="hub-count">{{ counts.teachers }}</span>
+        <span class="hub-link">Manage &rarr;</span>
     </a>
     <a href="{{ url_for('admin_students') }}" class="admin-hub-card">
         <h2>Students</h2>
-        <p class="meta">Add, edit, delete, register RFID cards, reset passwords.</p>
+        <span class="hub-count">{{ counts.students }}</span>
+        <span class="hub-link">Manage &rarr;</span>
     </a>
     <a href="{{ url_for('admin_classes') }}" class="admin-hub-card">
         <h2>Classes</h2>
-        <p class="meta">Add subjects, assign teachers/rooms/schedules.</p>
+        <span class="hub-count">{{ counts.classes }}</span>
+        <span class="hub-link">Manage &rarr;</span>
     </a>
     <a href="{{ url_for('admin_rooms') }}" class="admin-hub-card">
         <h2>Rooms</h2>
-        <p class="meta">Add or remove rooms used when assigning classes.</p>
+        <span class="hub-count">{{ counts.rooms }}</span>
+        <span class="hub-link">Manage &rarr;</span>
     </a>
 </div>
 {% endblock %}

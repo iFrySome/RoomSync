@@ -2,159 +2,95 @@
 {% block title %}RoomSync - My Dashboard{% endblock %}
 
 {% block content %}
-<h1>Welcome, {{ teacher.first_name }} {{ teacher.last_name }}</h1>
-<p class="meta">Date: {{ today }}</p>
+<div class="page-header">
+    <div>
+        <h1>Welcome, {{ teacher.first_name }}</h1>
+        <p class="meta">{{ today|fmt_date }}</p>
+    </div>
+    <div class="page-actions">
+        <a href="{{ url_for('dashboard_attendance') }}" class="btn btn-primary">Attendance Records</a>
+    </div>
+</div>
 
-{% with messages = get_flashed_messages(with_categories=true) %}
-    {% for category, message in messages %}
-    <div class="flash flash-{{ category }}">{{ message }}</div>
-    {% endfor %}
-{% endwith %}
-
-<!-- ========================= TODAY'S SESSIONS ========================= -->
 <section class="admin-section">
     <h2>Today's Sessions</h2>
-    {% for s in today_sessions %}
-    <div class="card small session-card">
-        <span class="pill session-status-{{ s.status|lower|replace(' ', '-') }}">{{ s.status }}</span>
-        <h3>{{ s.subject_name }}</h3>
-        <p class="meta">{{ s.start_time }}&ndash;{{ s.end_time }} &middot; Room {{ s.room_number }}</p>
-        <div class="summary-stats">
-            <div class="stat stat-present">Present<span>{{ s.present_count }}</span></div>
-            <div class="stat stat-late">Late<span>{{ s.late_count }}</span></div>
-            <div class="stat stat-excused">Excused<span>{{ s.excused_count }}</span></div>
-            <div class="stat stat-absent">Absent<span>{{ s.absent_count }}</span></div>
+    {% if today_sessions %}
+    <div class="session-grid">
+        {% for s in today_sessions %}
+        <div class="session-card">
+            <div class="session-card-head">
+                <div>
+                    <h3>{{ s.subject_name }}</h3>
+                    <p class="meta">{{ s.start_time|time_range(s.end_time) }} &middot; {{ s.room_number or "No room" }}</p>
+                </div>
+                <span class="pill session-status-{{ s.status|lower|replace(' ', '-') }}">{{ s.status }}</span>
+            </div>
+            <ul class="mini-stats">
+                <li class="present"><strong>{{ s.present_count }}</strong>present</li>
+                <li class="late"><strong>{{ s.late_count }}</strong>late</li>
+                <li class="excused"><strong>{{ s.excused_count }}</strong>excused</li>
+                <li class="absent"><strong>{{ s.absent_count }}</strong>absent</li>
+            </ul>
+            <a href="{{ url_for('dashboard_attendance', class_id=s.class_id, date=today) }}" class="btn btn-secondary btn-sm">View Roster</a>
         </div>
+        {% endfor %}
     </div>
     {% else %}
-    <p class="meta">No classes scheduled for today.</p>
-    {% endfor %}
+    <p class="empty-state">No classes today.</p>
+    {% endif %}
 </section>
 
-<!-- ============================ MY CLASSES ============================= -->
 <section class="admin-section">
     <h2>My Classes</h2>
-    <table class="roster-table admin-table">
+    <div class="table-wrap">
+    <table class="roster-table">
         <thead>
             <tr><th>Subject</th><th>Room</th><th>Schedule</th><th></th></tr>
         </thead>
         <tbody>
             {% for c in all_classes %}
             <tr>
-                <td>{{ c.subject_name }}</td>
+                <td class="cell-strong">{{ c.subject_name }}</td>
                 <td>{{ c.room_number or "—" }}</td>
-                <td>{{ (c.start_time ~ "–" ~ c.end_time) if (c.start_time and c.end_time) else "Not scheduled yet" }}</td>
-                <td class="admin-actions">
-                    <a href="{{ url_for('dashboard_class_roster', class_id=c.class_id) }}" class="btn-view">View</a>
+                <td>{{ c.start_time|time_range(c.end_time) }}</td>
+                <td class="cell-actions">
+                    <div class="row-actions">
+                        <a href="{{ url_for('dashboard_class_roster', class_id=c.class_id) }}" class="btn-view">Students</a>
+                        <a href="{{ url_for('dashboard_attendance', class_id=c.class_id) }}" class="btn-view">Records</a>
+                    </div>
                 </td>
             </tr>
             {% else %}
-            <tr><td colspan="4">You have no classes yet.</td></tr>
+            <tr><td colspan="4" class="cell-empty">No classes yet.</td></tr>
             {% endfor %}
         </tbody>
     </table>
+    </div>
 </section>
 
-<!-- ====================== MESSAGE A CLASS (SMS) ======================= -->
+{% if all_classes %}
 <section class="admin-section">
     <h2>Message a Class</h2>
-    <p class="meta">
-        Sends a text to every student enrolled in the class who has a
-        phone number on file — a student with none set just won't get it,
-        same as the automatic reminders.
-    </p>
-    {% if all_classes %}
-    <form method="POST" action="{{ url_for('dashboard_sms_broadcast') }}" class="admin-add-form">
-        <select name="class_id" required>
-            <option value="" disabled selected>Class</option>
-            {% for c in all_classes %}
-            <option value="{{ c.class_id }}">{{ c.subject_name }}</option>
-            {% endfor %}
-        </select>
-        <textarea name="message" placeholder="Message to send" rows="2" required></textarea>
-        <button type="submit">Send SMS</button>
-    </form>
-    {% else %}
-    <p class="meta">You have no classes yet.</p>
-    {% endif %}
-</section>
-
-<!-- ======================== ATTENDANCE HISTORY ======================== -->
-<section class="admin-section">
-    <h2>Attendance History</h2>
-    <form method="GET" action="{{ url_for('dashboard') }}" class="admin-add-form">
-        <select name="class_id" onchange="this.form.submit()">
-            <option value="" {% if not filter_class_id %}selected{% endif %}>Select a class&hellip;</option>
-            {% for c in all_classes %}
-            <option value="{{ c.class_id }}" {% if c.class_id == filter_class_id %}selected{% endif %}>
-                {{ c.subject_name }} ({{ (c.start_time ~ "-" ~ c.end_time) if (c.start_time and c.end_time) else "time not set" }})
-            </option>
-            {% endfor %}
-        </select>
-        <input type="date" name="date" value="{{ filter_date }}" onchange="this.form.submit()">
-        {% if filter_class_id %}
-        <a href="{{ url_for('dashboard', class_id=filter_class_id) }}" class="btn-view">Clear Date</a>
-        {% endif %}
-    </form>
-
-    {% if history_roster is not none %}
-        <div class="summary-stats" style="margin-top: 20px;">
-            <div class="stat stat-present">Present<span>{{ history_counts.present }}</span></div>
-            <div class="stat stat-late">Late<span>{{ history_counts.late }}</span></div>
-            <div class="stat stat-excused">Excused<span>{{ history_counts.excused }}</span></div>
-            <div class="stat stat-absent">Absent<span>{{ history_counts.absent }}</span></div>
+    <form method="POST" action="{{ url_for('dashboard_sms_broadcast') }}" class="form-grid">
+        <div class="field">
+            <label for="sms-class">Class</label>
+            <select name="class_id" id="sms-class" required>
+                <option value="" disabled selected>Choose a class</option>
+                {% for c in all_classes %}
+                <option value="{{ c.class_id }}">{{ c.subject_name }} ({{ c.start_time|time_range(c.end_time) }})</option>
+                {% endfor %}
+            </select>
         </div>
-        <table class="roster-table">
-            <thead>
-                <tr><th>Name</th><th>Section</th><th>Status</th><th>Time Tapped</th></tr>
-            </thead>
-            <tbody>
-                {% for r in history_roster %}
-                <tr>
-                    <td>{{ r.first_name }} {{ r.last_name }}</td>
-                    <td>{{ r.section }}</td>
-                    <td>
-                        <form method="POST" action="{{ url_for('dashboard_attendance_update') }}" class="status-edit-form">
-                            <input type="hidden" name="student_id" value="{{ r.student_id }}">
-                            <input type="hidden" name="class_id" value="{{ filter_class_id }}">
-                            <input type="hidden" name="date" value="{{ filter_date }}">
-                            <select name="status" class="status-select status-{{ r.status }}" onchange="this.form.submit()">
-                                <option value="present" {% if r.status == "present" %}selected{% endif %}>PRESENT</option>
-                                <option value="late" {% if r.status == "late" %}selected{% endif %}>LATE</option>
-                                <option value="excused" {% if r.status == "excused" %}selected{% endif %}>EXCUSED</option>
-                                <option value="absent" {% if r.status == "absent" %}selected{% endif %}>ABSENT</option>
-                            </select>
-                        </form>
-                    </td>
-                    <td>{{ r.time_tapped or "-" }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    {% elif history_dates %}
-        <table class="roster-table" style="margin-top: 20px;">
-            <thead>
-                <tr><th>Date</th><th>Present</th><th>Late</th><th>Excused</th><th>Absent</th><th></th></tr>
-            </thead>
-            <tbody>
-                {% for d in history_dates %}
-                <tr>
-                    <td>{{ d.date }}</td>
-                    <td>{{ d.present_count }}</td>
-                    <td>{{ d.late_count }}</td>
-                    <td>{{ d.excused_count }}</td>
-                    <td>{{ d.absent_count }}</td>
-                    <td><a href="{{ url_for('dashboard', class_id=filter_class_id, date=d.date) }}" class="btn-view">View</a></td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    {% elif filter_class_id %}
-        <p class="meta" style="margin-top: 16px;">No sessions recorded yet for this class.</p>
-    {% else %}
-        <p class="meta" style="margin-top: 16px;">Select a class above to see its past sessions.</p>
-    {% endif %}
+        <div class="field field-wide">
+            <label for="sms-message">Message</label>
+            <textarea name="message" id="sms-message" rows="2" required></textarea>
+        </div>
+        <div class="field field-action">
+            <button type="submit" class="btn btn-primary">Send SMS</button>
+        </div>
+    </form>
 </section>
+{% endif %}
 
 {% include "_push_notifications.html" %}
 {% endblock %}

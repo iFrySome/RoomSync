@@ -34,12 +34,31 @@
         return `${m}:${s.toString().padStart(2, "0")}`;
     }
 
+    // 24-hour time, the same as every other time in RoomSync. Built by hand
+    // rather than with toLocaleString(), whose output (and 12- vs 24-hour
+    // default) varies by browser and OS locale.
+    const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    const MONTH_NAMES = ["January", "February", "March", "April", "May", "June",
+                         "July", "August", "September", "October", "November", "December"];
+    const pad2 = (n) => String(n).padStart(2, "0");
+
     function renderClock() {
+        const d = new Date(serverNow());
         document.getElementById("clock").textContent =
-            new Date(serverNow()).toLocaleString("en-US", {
-                weekday: "long", year: "numeric", month: "long", day: "numeric",
-                hour: "numeric", minute: "2-digit", second: "2-digit", hour12: true,
-            });
+            `${DAY_NAMES[d.getDay()]}, ${pad2(d.getDate())} ${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}` +
+            ` · ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+    }
+
+    // One box per enrolled student, filled in tap order: green for each
+    // on-time tap, then amber for each late one, then outlined for the rest.
+    function rosterBoxes(state) {
+        const total = state.total_students ?? 0;
+        const present = state.present_count ?? 0;
+        const late = state.late_count ?? 0;
+        return Array.from({ length: total }, (_, i) => {
+            const cls = i < present ? "present" : i < present + late ? "late" : "absent";
+            return `<div class="roster-box ${cls}"></div>`;
+        }).join("");
     }
 
     function render() {
@@ -73,7 +92,7 @@
                 root.innerHTML = `
                     <div class="stage-wait">
                         <h2>Welcome, Sir/Ma'am!</h2>
-                        <p>Attendance starting in <strong>${remainingMin}</strong> minute(s)</p>
+                        <p>Attendance starting in <strong>${remainingMin}</strong> minute(s), at ${escapeHtml(state.start_time)}</p>
                     </div>`;
                 break;
             }
@@ -81,18 +100,14 @@
             case "attendance_open": {
                 const endAt = new Date(state.countdown_end_at).getTime();
                 const remainingSec = (endAt - serverNow()) / 1000;
-                const total = state.total_students ?? 0;
-                const presentCount = state.present_count ?? 0;
-                const boxes = Array.from({ length: total }, (_, i) => `
-                    <div class="roster-box ${i < presentCount ? "present" : "absent"}"></div>
-                `).join("");
                 root.innerHTML = `
                     <div class="stage-open">
                         <h2>Hello Sir/Ma'am ${escapeHtml(state.teacher_name)}</h2>
-                        <p class="class-name">${escapeHtml(state.subject_name)}</p>
+                        <p class="class-name">${escapeHtml(state.subject_name)} &middot; ${escapeHtml(state.start_time)}&ndash;${escapeHtml(state.end_time)}</p>
                         <div class="countdown">${fmtMMSS(remainingSec)}</div>
-                        <p class="hint">Students may now tap to record attendance.</p>
-                        <div class="roster-boxes">${boxes}</div>
+                        <p class="hint">Tap your card</p>
+                        <div class="roster-boxes">${rosterBoxes(state)}</div>
+                        <p class="roster-count">${state.present_count ?? 0} of ${state.total_students ?? 0} present</p>
                     </div>`;
                 break;
             }
@@ -110,19 +125,38 @@
                 document.getElementById("end-early-no").onclick = () => sendEndEarlyConfirm("no");
                 break;
 
-            case "class_ongoing":
+            case "class_ongoing": {
+                const total = state.total_students ?? 0;
+                const tapped = (state.present_count ?? 0) + (state.late_count ?? 0);
+                // Late taps are still accepted until end_time (see
+                // handle_student_tap() in app.py) — say so, unless every
+                // enrolled student is already in.
+                const note = total > 0 && tapped >= total
+                    ? "Attendance complete!"
+                    : `Late check-in until ${escapeHtml(state.end_time)}`;
                 root.innerHTML = `
                     <div class="stage-ongoing">
                         <h1>Class is Ongoing</h1>
                         <p class="class-name">${escapeHtml(state.subject_name)} until ${escapeHtml(state.end_time)}</p>
-                        <p class="hint">Attendance closed!</p>
+                        <p class="hint">${note}</p>
+                        <div class="roster-boxes">${rosterBoxes(state)}</div>
+                        <p class="roster-count">
+                            <span class="legend legend-present"></span>${state.present_count ?? 0} present
+                            <span class="legend legend-late"></span>${state.late_count ?? 0} late
+                            <span class="legend legend-absent"></span>${Math.max(0, total - tapped)} not yet
+                        </p>
                     </div>`;
                 break;
+            }
 
             case "session_summary": {
                 const expiresAt = new Date(state.summary_expires_at).getTime();
                 const remainingSec = Math.max(0, Math.ceil((expiresAt - serverNow()) / 1000));
-                const presentNames = (state.roster || []).filter((s) => s.present).map((s) => escapeHtml(s.name));
+                const namesWith = (status) => (state.roster || [])
+                    .filter((s) => s.status === status)
+                    .map((s) => escapeHtml(s.name));
+                const presentNames = namesWith("present");
+                const lateNames = namesWith("late");
                 const cancelButton = state.is_early_end
                     ? `<button id="summary-cancel" class="btn-cancel">Cancel</button>`
                     : "";
@@ -131,15 +165,17 @@
                         <h2>Session Summary</h2>
                         <p class="summary-line"><strong>Teacher:</strong> ${escapeHtml(state.teacher_name)}</p>
                         <p class="summary-line"><strong>Class:</strong> ${escapeHtml(state.subject_name)}</p>
-                        <p class="summary-line"><strong>Present (${state.present_count ?? 0}/${state.total_students ?? 0}):</strong>
+                        <p class="summary-line"><strong>Present (${presentNames.length}/${state.total_students ?? 0}):</strong>
                             ${presentNames.length ? presentNames.join(", ") : "No students present"}</p>
+                        <p class="summary-line"><strong>Late (${lateNames.length}):</strong>
+                            ${lateNames.length ? lateNames.join(", ") : "None"}</p>
                         <p class="confirm-question">Is this information correct?</p>
                         <div class="confirm-buttons">
                             <button id="summary-yes" class="btn-yes">Yes</button>
                             <button id="summary-no" class="btn-no">No</button>
                             ${cancelButton}
                         </div>
-                        <p class="hint">Auto-confirming in ${remainingSec}s if no response</p>
+                        <p class="hint">Auto-confirms in ${remainingSec}s</p>
                     </div>`;
                 document.getElementById("summary-yes").onclick = () => sendSummaryConfirm("yes");
                 document.getElementById("summary-no").onclick = () => sendSummaryConfirm("no");
@@ -164,13 +200,13 @@
                 root.innerHTML = `
                     <div class="stage-summary">
                         <h2>Edit Attendance</h2>
-                        <p class="hint">Tap a student to cycle: absent &rarr; present &rarr; late &rarr; excused.</p>
+                        <p class="hint">Tap a name to change it</p>
                         <div class="roster-toggle-grid">${toggles}</div>
                         <div class="confirm-buttons">
-                            <button id="summary-save" class="btn-yes">Confirm &amp; Continue</button>
+                            <button id="summary-save" class="btn-yes">Confirm</button>
                             ${editCancelButton}
                         </div>
-                        <p class="hint">Auto-confirming in ${remainingSec}s if no response</p>
+                        <p class="hint">Auto-confirms in ${remainingSec}s</p>
                     </div>`;
                 root.querySelectorAll(".roster-toggle").forEach((btn) => {
                     btn.onclick = () => sendSummaryToggle(btn.dataset.studentId);
@@ -187,7 +223,7 @@
                 root.innerHTML = `
                     <div class="stage-welcome">
                         <h1>WELCOME</h1>
-                        <p>Tap your RFID card to begin</p>
+                        <p>Tap your card to begin</p>
                     </div>`;
                 break;
         }

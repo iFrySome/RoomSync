@@ -1,0 +1,83 @@
+{# Shared UI pieces, imported with {% from "_macros.html" import ... %} so
+   every page renders breadcrumbs, time fields, date-range filters, and
+   attendance counts the exact same way. #}
+
+{# items: list of (label, url) pairs; the current page is appended last
+   with url=None so it renders as plain text instead of a link. #}
+{% macro breadcrumbs(items) -%}
+<nav class="breadcrumb" aria-label="Breadcrumb">
+    {%- for label, url in items %}
+    {% if url %}<a href="{{ url }}">{{ label }}</a>{% else %}<span aria-current="page">{{ label }}</span>{% endif %}
+    {% if not loop.last %}<span class="breadcrumb-sep" aria-hidden="true">&rsaquo;</span>{% endif %}
+    {%- endfor %}
+</nav>
+{%- endmacro %}
+
+{# A 24-hour HH:MM time field. Deliberately a text input rather than
+   <input type="time">, which many browsers show as 12-hour AM/PM based on
+   the OS locale — see normalize_time_24h() in app.py, which accepts the
+   same loose forms this pattern does ("8:00", "0800") and normalizes them,
+   and the blur handler in base.html that tidies them up as you type. #}
+{% macro time_input(name, value="", id=None, form=None, required=False) -%}
+<input type="text" name="{{ name }}" value="{{ value or '' }}" class="time-24h"
+       {%- if id %} id="{{ id }}"{% endif %}{% if form %} form="{{ form }}"{% endif %}
+       inputmode="numeric" maxlength="5" placeholder="HH:MM" autocomplete="off"
+       pattern="([01]?[0-9]|2[0-3]):?[0-5][0-9]" title="24-hour time (HH:MM), e.g. 08:00 or 13:30"
+       {%- if required %} required{% endif %}>
+{%- endmacro %}
+
+{# From/To date pickers plus one-click preset chips (Today, This Week, ...),
+   driven by the dict resolve_date_range() in app.py returns. Anything
+   wrapped in {% call %} (e.g. a class dropdown) is placed inside the same
+   form, so changing it keeps the currently selected range. #}
+{% macro date_range_filter(date_range, action) -%}
+<div class="filter-panel">
+    <form method="GET" action="{{ action }}" class="form-grid filter-form">
+        {% if caller is defined %}{{ caller() }}{% endif %}
+        <input type="hidden" name="range" value="custom">
+        <div class="field">
+            <label for="range-start">From</label>
+            <input type="date" id="range-start" name="start" value="{{ date_range.start_iso }}">
+        </div>
+        <div class="field">
+            <label for="range-end">To</label>
+            <input type="date" id="range-end" name="end" value="{{ date_range.end_iso }}">
+        </div>
+        <div class="field field-action">
+            <button type="submit" class="btn btn-primary">Show Records</button>
+        </div>
+    </form>
+    <div class="chip-row" role="group" aria-label="Quick date ranges">
+        {% for p in date_range.presets %}
+        <a href="{{ p.url }}" class="chip{% if p.key == date_range.key %} active{% endif %}"
+           {%- if p.key == date_range.key %} aria-current="true"{% endif %}>{{ p.label }}</a>
+        {% endfor %}
+    </div>
+</div>
+{%- endmacro %}
+
+{# counts: {"present": n, "late": n, "excused": n, "absent": n} #}
+{% macro stat_row(counts) -%}
+<div class="summary-stats">
+    <div class="stat stat-present">Present<span>{{ counts.present }}</span></div>
+    <div class="stat stat-late">Late<span>{{ counts.late }}</span></div>
+    <div class="stat stat-excused">Excused<span>{{ counts.excused }}</span></div>
+    <div class="stat stat-absent">Absent<span>{{ counts.absent }}</span></div>
+</div>
+{%- endmacro %}
+
+{# A status dropdown that saves on change (dashboard_attendance_update in
+   app.py), then returns to this exact page via `next`. #}
+{% macro status_select_form(student_id, class_id, date, status) -%}
+<form method="POST" action="{{ url_for('dashboard_attendance_update') }}" class="status-edit-form">
+    <input type="hidden" name="student_id" value="{{ student_id }}">
+    <input type="hidden" name="class_id" value="{{ class_id }}">
+    <input type="hidden" name="date" value="{{ date }}">
+    <input type="hidden" name="next" value="{{ request.full_path }}">
+    <select name="status" class="status-select status-{{ status }}" onchange="this.form.submit()" aria-label="Attendance status">
+        {% for s in ("present", "late", "excused", "absent") %}
+        <option value="{{ s }}" {% if s == status %}selected{% endif %}>{{ s|upper }}</option>
+        {% endfor %}
+    </select>
+</form>
+{%- endmacro %}

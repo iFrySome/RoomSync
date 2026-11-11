@@ -1,97 +1,144 @@
 {% extends "base.html" %}
+{% from "_macros.html" import breadcrumbs %}
 {% block title %}RoomSync - {{ student.first_name }} {{ student.last_name }}{% endblock %}
 
 {% block content %}
-<p class="meta"><a href="{{ url_for('admin_students') }}">&larr; Back to Students</a></p>
-<h1>{{ student.first_name }} {{ student.last_name }}</h1>
-<p class="meta">Login Username: {{ student.username or "—" }}</p>
+{{ breadcrumbs([
+    ("Admin", url_for('admin')),
+    ("Students", url_for('admin_students')),
+    (student.first_name ~ " " ~ student.last_name, None),
+]) }}
+<div class="page-header">
+    <div>
+        <h1>{{ student.first_name }} {{ student.last_name }}</h1>
+        <p class="meta">{{ student.section }} &middot; Username: {{ student.username or "—" }}</p>
+    </div>
+</div>
 
-{% with messages = get_flashed_messages(with_categories=true) %}
-    {% for category, message in messages %}
-    <div class="flash flash-{{ category }}">{{ message }}</div>
-    {% endfor %}
-{% endwith %}
+<section class="admin-section">
+    <h2>Details</h2>
+    <form method="POST" action="{{ url_for('admin_update_student', student_id=student.student_id) }}" class="form-grid">
+        <input type="hidden" name="student_context" value="{{ student.student_id }}">
+        <div class="field field-wide">
+            <div class="field-label-row">
+                <label for="student-rfid">RFID Tag</label>
+                <span id="student-rfid-status" class="rfid-register-status"></span>
+            </div>
+            <div class="input-with-action">
+                <input name="rfid_tag" id="student-rfid" value="{{ student.rfid_tag }}" required>
+                <button type="button" class="btn btn-secondary rfid-register-btn" data-user-type="student" data-user-id="{{ student.student_id }}"
+                        data-input="student-rfid" data-status="student-rfid-status">Scan Card</button>
+            </div>
+        </div>
+        <div class="field">
+            <label for="student-first">First Name</label>
+            <input name="first_name" id="student-first" value="{{ student.first_name }}" required>
+        </div>
+        <div class="field">
+            <label for="student-last">Last Name</label>
+            <input name="last_name" id="student-last" value="{{ student.last_name }}" required>
+        </div>
+        <div class="field">
+            <label for="student-section">Section</label>
+            <input name="section" id="student-section" value="{{ student.section }}" required>
+        </div>
+        <div class="field">
+            <label for="student-phone">Phone <span class="optional">(optional)</span></label>
+            <input type="tel" name="phone_number" id="student-phone" value="{{ student.phone_number or '' }}">
+        </div>
+        <div class="field field-action">
+            <button type="submit" class="btn btn-save">Save</button>
+        </div>
+    </form>
 
-<h2>Credentials</h2>
-<form method="POST" action="{{ url_for('admin_update_student', student_id=student.student_id) }}" class="admin-add-form">
-    <input type="hidden" name="student_context" value="{{ student.student_id }}">
-    <input name="rfid_tag" value="{{ student.rfid_tag }}" placeholder="RFID Tag" required>
-    <input name="first_name" value="{{ student.first_name }}" placeholder="First Name" required>
-    <input name="last_name" value="{{ student.last_name }}" placeholder="Last Name" required>
-    <input name="section" value="{{ student.section }}" placeholder="Section" required>
-    <input name="phone_number" value="{{ student.phone_number or '' }}" placeholder="Phone Number (optional, for SMS)">
-    <button type="submit" class="btn-save">Save</button>
-</form>
+    <h3>Reset Password</h3>
+    <form method="POST" action="{{ url_for('admin_reset_student_password', student_id=student.student_id) }}" class="form-grid">
+        <div class="field field-fixed">
+            <label for="student-new-password">New Password</label>
+            <input type="password" name="new_password" id="student-new-password" autocomplete="new-password" required>
+        </div>
+        <div class="field field-action">
+            <button type="submit" class="btn btn-secondary">Reset Password</button>
+        </div>
+    </form>
+</section>
 
-<form method="POST" action="{{ url_for('admin_reset_student_password', student_id=student.student_id) }}"
-      class="inline-form reset-password-form">
-    <input type="password" name="new_password" placeholder="New portal login password" required>
-    <button type="submit" class="btn-save">Reset Password</button>
-</form>
+<section class="admin-section">
+    <h2>Classes</h2>
+    {% if enrollments %}
+    <div class="table-wrap">
+    <table class="roster-table">
+        <thead>
+            <tr><th>Subject</th><th>Teacher</th><th>Room</th><th>Schedule</th><th></th></tr>
+        </thead>
+        <tbody>
+            {% for e in enrollments %}
+            <tr>
+                <td class="cell-strong">{{ e.subject_name }}</td>
+                <td>{{ e.teacher_name or "—" }}</td>
+                <td>{{ e.room_number or "—" }}</td>
+                <td>{{ e.start_time|time_range(e.end_time) }}</td>
+                <td class="cell-actions">
+                    <form method="POST" action="{{ url_for('admin_unenroll_student', student_id=student.student_id) }}"
+                          class="inline-form" onsubmit='return confirm({{ ("Remove " ~ student.first_name ~ " from " ~ e.subject_name ~ "? Their attendance history is kept.")|tojson }});'>
+                        <input type="hidden" name="class_id" value="{{ e.class_id }}">
+                        <button type="submit" class="btn-delete">Unenroll</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% else %}
+    <p class="empty-state">Not enrolled in any classes.</p>
+    {% endif %}
 
-<h2>Enrolled Classes</h2>
-{% if enrollments %}
-<table class="roster-table admin-table">
-    <thead>
-        <tr><th>Subject</th><th>Teacher</th><th>Room</th><th>Schedule</th><th></th></tr>
-    </thead>
-    <tbody>
-        {% for e in enrollments %}
-        <tr>
-            <td>{{ e.subject_name }}</td>
-            <td>{{ e.teacher_name }}</td>
-            <td>{{ e.room_number or "—" }}</td>
-            <td>{{ e.start_time }}&ndash;{{ e.end_time }}</td>
-            <td class="admin-actions">
-                <form method="POST" action="{{ url_for('admin_unenroll_student', student_id=student.student_id) }}"
-                      class="inline-form" onsubmit="return confirm('Remove {{ student.first_name }} from {{ e.subject_name }}? Their attendance history for it is kept.');">
-                    <input type="hidden" name="class_id" value="{{ e.class_id }}">
-                    <button type="submit" class="btn-delete">Unenroll</button>
-                </form>
-            </td>
-        </tr>
-        {% endfor %}
-    </tbody>
-</table>
-{% else %}
-<p class="meta">{{ student.first_name }} isn't enrolled in any classes yet.</p>
-{% endif %}
+    <h3>Enroll in a Class</h3>
+    {% if enrollable_subjects %}
+    <form method="POST" action="{{ url_for('admin_enroll_student', student_id=student.student_id) }}" class="form-grid" id="enroll-form">
+        <div class="field">
+            <label for="enroll-subject">Subject</label>
+            <select id="enroll-subject" required>
+                <option value="" disabled selected>Choose a subject</option>
+                {% for subj in enrollable_subjects %}
+                <option value="{{ subj }}">{{ subj }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="field field-wide">
+            <label for="enroll-schedule">Schedule</label>
+            <select name="class_id" id="enroll-schedule" required disabled>
+                <option value="" disabled selected>Choose a subject first</option>
+            </select>
+        </div>
+        <div class="field field-action">
+            <button type="submit" class="btn btn-primary">Enroll</button>
+        </div>
+    </form>
+    <script>
+        const ENROLLABLE_CLASSES = {{ enrollable_classes|tojson }};
+        const subjectSelect = document.getElementById("enroll-subject");
+        const scheduleSelect = document.getElementById("enroll-schedule");
 
-<h2>Enroll in a Class</h2>
-{% if enrollable_subjects %}
-<p class="meta">Pick a subject, then which schedule of it (by teacher) to enroll in.</p>
-<form method="POST" action="{{ url_for('admin_enroll_student', student_id=student.student_id) }}" class="admin-add-form" id="enroll-form">
-    <select id="enroll-subject" required>
-        <option value="" disabled selected>Subject</option>
-        {% for subj in enrollable_subjects %}
-        <option value="{{ subj }}">{{ subj }}</option>
-        {% endfor %}
-    </select>
-    <select name="class_id" id="enroll-schedule" required disabled>
-        <option value="" disabled selected>Pick a subject first</option>
-    </select>
-    <button type="submit">Enroll</button>
-</form>
-<script>
-    const ENROLLABLE_CLASSES = {{ enrollable_classes|tojson }};
-    const subjectSelect = document.getElementById("enroll-subject");
-    const scheduleSelect = document.getElementById("enroll-schedule");
+        function escapeHtml(str) {
+            return String(str).replace(/[&<>"']/g, (c) => ({
+                "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+            }[c]));
+        }
 
-    function escapeHtml(str) {
-        return String(str).replace(/[&<>"']/g, (c) => ({
-            "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
-        }[c]));
-    }
+        subjectSelect.addEventListener("change", () => {
+            const options = ENROLLABLE_CLASSES.filter((c) => c.subject_name === subjectSelect.value);
+            scheduleSelect.innerHTML = options.map((c) =>
+                `<option value="${c.class_id}">${escapeHtml(c.teacher_name)} — ${c.start_time}–${c.end_time} (${escapeHtml(c.room_number || "no room")})</option>`
+            ).join("");
+            scheduleSelect.disabled = options.length === 0;
+        });
+    </script>
+    {% else %}
+    <p class="empty-state">No other classes available.</p>
+    {% endif %}
+</section>
 
-    subjectSelect.addEventListener("change", () => {
-        const options = ENROLLABLE_CLASSES.filter((c) => c.subject_name === subjectSelect.value);
-        scheduleSelect.innerHTML = options.map((c) =>
-            `<option value="${c.class_id}">${escapeHtml(c.teacher_name)} — ${c.start_time}–${c.end_time} (${escapeHtml(c.room_number || "no room")})</option>`
-        ).join("");
-        scheduleSelect.disabled = options.length === 0;
-    });
-</script>
-{% else %}
-<p class="meta">No other tappable classes available to enroll in right now.</p>
-{% endif %}
+{% include "_rfid_register.html" %}
 {% endblock %}

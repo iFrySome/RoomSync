@@ -1,0 +1,127 @@
+<script>
+    // RFID "Scan Card" buttons, shared by the admin Teachers/Students pages
+    // (Add form) and each teacher's/student's own page (Credentials).
+    //
+    // <button class="rfid-register-btn" data-user-type="teacher|student"
+    //         [data-user-id="<id>"] data-input="<input id>" data-status="<status id>">
+    //
+    // Clicking arms the server to capture the next /kiosk tap (real RC522 or
+    // the simulated kiosk page) instead of it being processed as a normal tap.
+    // With data-user-id, that tap is written straight onto that person's
+    // rfid_tag; without one (someone being added, who has no row yet), it is
+    // only captured and checked, and put into the form's input to be saved
+    // with the rest of the form. Only one scan is armed at a time; a button
+    // notices if its scan got superseded elsewhere and quietly resets.
+    (function () {
+        const POLL_INTERVAL_MS = 1500;
+        const START_URL = "{{ url_for('admin_rfid_register_start') }}";
+        const CANCEL_URL = "{{ url_for('admin_rfid_register_cancel') }}";
+        const STATUS_URL = "{{ url_for('api_rfid_register_status') }}";
+
+        document.querySelectorAll(".rfid-register-btn").forEach((btn) => {
+            const userType = btn.dataset.userType;
+            const userId = btn.dataset.userId ? parseInt(btn.dataset.userId, 10) : null;
+            const input = document.getElementById(btn.dataset.input);
+            const statusEl = document.getElementById(btn.dataset.status);
+            const idleLabel = btn.textContent;
+            const idleStatus = statusEl ? statusEl.textContent : "";
+            let pollTimer = null;
+
+            function stopPolling() {
+                if (pollTimer) {
+                    clearInterval(pollTimer);
+                    pollTimer = null;
+                }
+            }
+
+            function setWaiting(waiting) {
+                btn.dataset.waiting = waiting ? "1" : "0";
+                btn.textContent = waiting ? "Cancel" : idleLabel;
+            }
+
+            function setStatus(text, cls) {
+                if (!statusEl) return;
+                statusEl.textContent = text || "";
+                statusEl.className = "rfid-register-status" + (cls ? " " + cls : "");
+            }
+
+            function poll() {
+                pollTimer = setInterval(() => {
+                    fetch(STATUS_URL)
+                        .then((r) => r.json())
+                        .then((state) => {
+                            const isThisButton = state.user_type === userType && state.user_id === userId;
+                            if (state.active && state.status === "waiting" && isThisButton) {
+                                return; // still waiting for this button's tap
+                            }
+                            stopPolling();
+                            setWaiting(false);
+                            if (isThisButton && state.status === "success") {
+                                input.value = state.tag;
+                                setStatus((userId === null ? "Card scanned: " : "Saved: ") + state.tag, "rfid-register-success");
+                            } else if (isThisButton && state.status === "error") {
+                                setStatus(state.message || "Scan failed.", "rfid-register-error");
+                            } else {
+                                setStatus(idleStatus);
+                            }
+                        })
+                        .catch(() => {
+                            stopPolling();
+                            setWaiting(false);
+                            setStatus("Lost connection while waiting for a tap.", "rfid-register-error");
+                        });
+                }, POLL_INTERVAL_MS);
+            }
+
+            // Add forms (no user id yet): don't submit until a card is scanned,
+            // so the typed details aren't lost to a server-side error.
+            const form = btn.closest("form");
+            if (userId === null && form) {
+                form.addEventListener("submit", (event) => {
+                    if (!input.value) {
+                        event.preventDefault();
+                        setStatus("Scan the card first.", "rfid-register-error");
+                        btn.focus();
+                    }
+                });
+            }
+
+            // Closing a popup mid-scan cancels the scan.
+            const dialog = btn.closest("dialog");
+            if (dialog) {
+                dialog.addEventListener("close", () => {
+                    if (btn.dataset.waiting === "1") btn.click();
+                });
+            }
+
+            btn.addEventListener("click", () => {
+                if (btn.dataset.waiting === "1") {
+                    stopPolling();
+                    setWaiting(false);
+                    setStatus(idleStatus);
+                    fetch(CANCEL_URL, { method: "POST" });
+                    return;
+                }
+
+                setWaiting(true);
+                setStatus("Tap the card on the reader…");
+                const body = { user_type: userType };
+                if (userId !== null) body.user_id = userId;
+                fetch(START_URL, { method: "POST", body: new URLSearchParams(body) })
+                    .then((r) => r.json())
+                    .then((res) => {
+                        if (!res.ok) {
+                            setWaiting(false);
+                            setStatus(res.error || "Could not start the scan.", "rfid-register-error");
+                            return;
+                        }
+                        poll();
+                    })
+                    .catch(() => {
+                        setWaiting(false);
+                        setStatus("Could not start the scan.", "rfid-register-error");
+                    });
+            });
+        });
+    })();
+</script>

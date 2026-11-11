@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% from "_macros.html" import breadcrumbs, date_range_filter, stat_row, status_select_form %}
+{% block title %}RoomSync - Attendance Records{% endblock %}
+
+{% block content %}
+{% if roster is not none %}
+{# ------------------ One session's roster (?date=) ------------------ #}
+{% set records_url = url_for('dashboard_attendance', class_id=selected_class.class_id, **date_range.params) %}
+{{ breadcrumbs([
+    ("My Dashboard", url_for('dashboard')),
+    ("Attendance Records", records_url),
+    (roster_date|fmt_date, None),
+]) }}
+<div class="page-header">
+    <div>
+        <h1>{{ selected_class.subject_name }}</h1>
+        <p class="meta">{{ roster_date|fmt_date }} &middot; {{ selected_class.start_time|time_range(selected_class.end_time) }} &middot; {{ selected_class.room_number or "No room" }}</p>
+    </div>
+    <div class="page-actions">
+        <a href="{{ records_url }}" class="btn btn-secondary">&larr; Back to Records</a>
+    </div>
+</div>
+
+<section class="admin-section">
+    {{ stat_row(roster_counts) }}
+    <div class="table-wrap">
+    <table class="roster-table">
+        <thead>
+            <tr><th>Name</th><th>Section</th><th>Status</th><th>Time Tapped</th></tr>
+        </thead>
+        <tbody>
+            {% for r in roster %}
+            <tr>
+                <td class="cell-strong">{{ r.first_name }} {{ r.last_name }}</td>
+                <td>{{ r.section }}</td>
+                <td>{{ status_select_form(r.student_id, selected_class.class_id, roster_date, r.status) }}</td>
+                <td>{{ r.time_tapped if r.time_tapped and r.status != "absent" else "—" }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="4" class="cell-empty">No students enrolled.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</section>
+
+{% else %}
+{# --------------- A class across a date range (default) --------------- #}
+{{ breadcrumbs([("My Dashboard", url_for('dashboard')), ("Attendance Records", None)]) }}
+<div class="page-header">
+    <div>
+        <h1>Attendance Records</h1>
+        {% if selected_class %}
+        <p class="meta">{{ selected_class.subject_name }} &middot; {{ selected_class.start_time|time_range(selected_class.end_time) }} &middot; {{ selected_class.room_number or "No room" }}</p>
+        {% endif %}
+    </div>
+</div>
+
+{% if not all_classes %}
+<p class="empty-state">You have no classes yet.</p>
+{% else %}
+<section class="admin-section">
+    {% call date_range_filter(date_range, url_for('dashboard_attendance')) %}
+    <div class="field">
+        <label for="records-class">Class</label>
+        <select name="class_id" id="records-class" onchange="this.form.submit()">
+            {% for c in all_classes %}
+            <option value="{{ c.class_id }}" {% if c.class_id == selected_class.class_id %}selected{% endif %}>
+                {{ c.subject_name }} ({{ c.start_time|time_range(c.end_time) }})
+            </option>
+            {% endfor %}
+        </select>
+    </div>
+    {% endcall %}
+</section>
+
+<section class="admin-section">
+    <div class="section-header">
+        <h2>Summary</h2>
+        <span class="meta">{{ report.sessions|length }} session{{ "" if report.sessions|length == 1 else "s" }} &middot; {{ report.students|length }} student{{ "" if report.students|length == 1 else "s" }} enrolled</span>
+    </div>
+    {{ stat_row(report.totals) }}
+</section>
+
+<section class="admin-section">
+    <h2>Sessions</h2>
+    {% if report.sessions %}
+    <div class="table-wrap">
+    <table class="roster-table">
+        <thead>
+            <tr><th>Date</th><th>Present</th><th>Late</th><th>Excused</th><th>Absent</th><th></th></tr>
+        </thead>
+        <tbody>
+            {% for s in report.sessions %}
+            <tr>
+                <td class="cell-strong">{{ s.date|fmt_date }}</td>
+                <td>{{ s.counts.present }}</td>
+                <td>{{ s.counts.late }}</td>
+                <td>{{ s.counts.excused }}</td>
+                <td>{{ s.counts.absent }}</td>
+                <td class="cell-actions">
+                    <a href="{{ url_for('dashboard_attendance', class_id=selected_class.class_id, date=s.date, **date_range.params) }}" class="btn-view">Roster</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% else %}
+    <p class="empty-state">No sessions in {{ date_range.label }}. <a href="{{ date_range.presets[-1].url }}">Show all time</a></p>
+    {% endif %}
+</section>
+
+{% if report.sessions %}
+<section class="admin-section">
+    <h2>Students</h2>
+    <div class="table-wrap">
+    <table class="roster-table">
+        <thead>
+            <tr><th>Name</th><th>Section</th><th>Present</th><th>Late</th><th>Excused</th><th>Absent</th><th></th></tr>
+        </thead>
+        <tbody>
+            {% for st in report.students %}
+            <tr>
+                <td class="cell-strong">{{ st.first_name }} {{ st.last_name }}</td>
+                <td>{{ st.section }}</td>
+                <td>{{ st.counts.present }}</td>
+                <td>{{ st.counts.late }}</td>
+                <td>{{ st.counts.excused }}</td>
+                <td>{{ st.counts.absent }}</td>
+                <td class="cell-actions">
+                    <a href="{{ url_for('dashboard_student_attendance', class_id=selected_class.class_id, student_id=st.student_id, **date_range.params) }}" class="btn-view">Details</a>
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="7" class="cell-empty">No students enrolled.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</section>
+{% endif %}
+{% endif %}
+{% endif %}
+{% endblock %}

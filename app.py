@@ -22,10 +22,12 @@ The main display ("/") is a polling-driven state machine with these stages:
                             moment every student has tapped in (perfect
                             attendance)
   class_ongoing         -> countdown ended (or attendance was perfect);
-                            waits for class end_time, then moves to
-                            session_summary. If the active class's teacher
-                            taps again here (before end_time), moves to
-                            end_early_confirm instead
+                            students who still haven't tapped can tap in
+                            here and are recorded as "late", up until the
+                            class's end_time. Waits for end_time, then
+                            moves to session_summary. If the active
+                            class's teacher taps again here (before
+                            end_time), moves to end_early_confirm instead
   end_early_confirm     -> the active teacher tapped again during
                             attendance_open or class_ongoing, before
                             end_time. Asks "do you want to end the class
@@ -61,6 +63,7 @@ state and auto-expire, without changing the underlying stage.
 
 import json
 import math
+import re
 import sqlite3
 import threading
 import urllib.parse
@@ -228,6 +231,52 @@ def login_required(role):
 
 
 # ---------------------------------------------------------------------------
+# Time and date formatting. RoomSync uses 24-hour ("military") time
+# everywhere: class times are stored as HH:MM, every page shows HH:MM (or
+# HH:MM:SS for a tap timestamp), the display clock runs 24-hour, and every
+# admin form takes HH:MM as typed text — deliberately not
+# <input type="time">, which many browsers render as 12-hour AM/PM based
+# on the OS locale and would contradict every other time in the system.
+# ---------------------------------------------------------------------------
+
+TIME_24H_RE = re.compile(r"^([01]?\d|2[0-3]):?([0-5]\d)$")
+
+
+def normalize_time_24h(value):
+    """Normalizes a typed 24-hour time to HH:MM — "8:00", "0800", and
+    "08:00" all become "08:00". Returns "" for blank input, and None for
+    anything that isn't a valid 24-hour time (e.g. "8:00 PM", "24:00")."""
+    value = (value or "").strip()
+    if not value:
+        return ""
+    match = TIME_24H_RE.match(value)
+    if not match:
+        return None
+    return f"{int(match.group(1)):02d}:{match.group(2)}"
+
+
+@app.template_filter("fmt_date")
+def fmt_date(value):
+    """"2026-11-03" (or a date object) -> "Tue, 03 Nov 2026" — the one
+    date format every page displays. Anything unparseable is returned
+    unchanged."""
+    if isinstance(value, str):
+        try:
+            value = datetime.strptime(value, "%Y-%m-%d").date()
+        except ValueError:
+            return value
+    return value.strftime("%a, %d %b %Y") if value else ""
+
+
+@app.template_filter("time_range")
+def time_range(start_time, end_time):
+    """"08:00", "09:30" -> "08:00–09:30"; "Not scheduled" if either is unset."""
+    if start_time and end_time:
+        return f"{start_time}–{end_time}"
+    return "Not scheduled"
+
+
+# ---------------------------------------------------------------------------
 # Display state machine (single room, in-memory, shared by / and /kiosk)
 # ---------------------------------------------------------------------------
 
@@ -319,13 +368,8 @@ def _notify_session_ended(conn, class_id, teacher_id, subject_name, today):
     teacher_early_confirm) never sends this."""
     if not teacher_id:
         return
-    total = conn.execute(
-        "SELECT COUNT(*) AS c FROM enrollments WHERE class_id = ?", (class_id,)
-    ).fetchone()["c"]
-    present = conn.execute(
-        "SELECT COUNT(*) AS c FROM attendance WHERE class_id = ? AND date = ?", (class_id, today)
-    ).fetchone()["c"]
-    body = f"Session ended: {present}/{total} present for {subject_name}."
+    roster, present, late, _excused, _absent = get_roster_for_date(conn, class_id, today)
+    body = f"Session ended: {present}/{len(roster)} present, {late} late for {subject_name}."
     send_push_notification("teacher", teacher_id, "Session Ended", body)
     # room_state only carries teacher_id/teacher_name, not phone_number, so
     # unlike the other two triggers (which already join phone_number into
@@ -446,7 +490,11 @@ def advance_state(conn, now=None):
         elif stage == "attendance_open":
             countdown_end_at = datetime.fromisoformat(room_state["countdown_end_at"])
             today = now.strftime("%Y-%m-%d")
-            if now >= countdown_end_at or _attendance_is_perfect(conn, room_state["class_id"], today):
+            end_dt = datetime.strptime(f"{today} {room_state['end_time']}", "%Y-%m-%d %H:%M")
+            # Also closes at end_time, for a short class whose window would
+            # otherwise outlast the class itself — no tap is ever accepted
+            # after the class's assigned time.
+            if now >= countdown_end_at or now >= end_dt or _attendance_is_perfect(conn, room_state["class_id"], today):
                 room_state["stage"] = "class_ongoing"
 
         elif stage == "class_ongoing":
@@ -466,9 +514,16 @@ def get_teacher_class_today(conn, teacher_id, now):
     """The teacher's next/current class today that hasn't ended yet.
     Classes have no day-of-week concept — once a class has a start/end time
     set, it's assumed to meet every single day at that time, so this only
-    filters on the time of day, not which day it is."""
+    filters on the time of day, not which day it is.
+
+    A class ended early today (End Class Early) counts as already over,
+    even though its scheduled end_time hasn't arrived. Otherwise the
+    teacher tapping again afterwards would start that class over, and
+    _open_attendance_window() would wipe the attendance just recorded for
+    it — and it would also block an early tap for the teacher's next class."""
     time_now = now.strftime("%H:%M")
-    return conn.execute(
+    today = now.strftime("%Y-%m-%d")
+    rows = conn.execute(
         """
         SELECT class_id, subject_name, room_number, start_time, end_time, attendance_window_minutes
         FROM classes
@@ -477,10 +532,13 @@ def get_teacher_class_today(conn, teacher_id, now):
           AND end_time IS NOT NULL
           AND end_time > ?
         ORDER BY start_time
-        LIMIT 1
         """,
         (teacher_id, time_now),
-    ).fetchone()
+    ).fetchall()
+    for row in rows:
+        if (row["class_id"], today) not in _early_ended_sessions:
+            return row
+    return None
 
 
 def class_time_conflict(conn, teacher_id, start_time, end_time, exclude_class_id=None):
@@ -618,19 +676,30 @@ def handle_teacher_tap(conn, teacher, now):
 
 
 def handle_student_tap(conn, student, now):
+    """A student's tap counts while the class is in session: "present"
+    during the attendance_open countdown, or "late" once that window has
+    closed (class_ongoing) — but only up until the class's end_time, never
+    after the assigned class time is over."""
     student_name = f"{student['first_name']} {student['last_name']}"
 
     with room_state_lock:
         stage = room_state["stage"]
         class_id = room_state["class_id"]
+        end_time = room_state["end_time"]
 
     if stage == "welcome":
         set_flash("Only teachers can tap at this time.", "error", seconds=4)
         return "Only teachers can tap at this time.", "error"
 
-    if stage != "attendance_open":
+    if stage not in ("attendance_open", "class_ongoing"):
         set_flash("Attendance is not open right now.", "warning", seconds=3)
         return "Attendance is not currently open.", "warning"
+
+    today = now.strftime("%Y-%m-%d")
+    end_dt = datetime.strptime(f"{today} {end_time}", "%Y-%m-%d %H:%M")
+    if now >= end_dt:
+        set_flash(f"Class ended at {end_time} — attendance is closed.", "warning", seconds=3)
+        return f"Class ended at {end_time} — attendance is closed.", "warning"
 
     enrolled = conn.execute(
         "SELECT 1 FROM enrollments WHERE student_id = ? AND class_id = ?",
@@ -640,7 +709,6 @@ def handle_student_tap(conn, student, now):
         set_flash(f"{student_name} is not enrolled in this class.", "error", seconds=4)
         return f"{student_name} is not enrolled in this class.", "error"
 
-    today = now.strftime("%Y-%m-%d")
     already = conn.execute(
         "SELECT 1 FROM attendance WHERE student_id = ? AND class_id = ? AND date = ?",
         (student["student_id"], class_id, today),
@@ -650,17 +718,22 @@ def handle_student_tap(conn, student, now):
         set_flash(f"{student_name} already tapped in.", "warning", seconds=3)
         return f"{student_name} already tapped in.", "warning"
 
+    status = "present" if stage == "attendance_open" else "late"
     conn.execute(
         """
         INSERT INTO attendance (student_id, class_id, date, time_tapped, status)
-        VALUES (?, ?, ?, ?, 'present')
+        VALUES (?, ?, ?, ?, ?)
         """,
-        (student["student_id"], class_id, today, now.strftime("%H:%M:%S")),
+        (student["student_id"], class_id, today, now.strftime("%H:%M:%S"), status),
     )
     conn.commit()
 
-    set_flash(f"{student_name} - PRESENT", "success", seconds=3)
-    return f"{student_name} - PRESENT", "success"
+    message = f"{student_name} - {status.upper()}"
+    # A late tap is still an accepted tap ("success" to the kiosk, so it
+    # gets the positive beep), but the shared display shows it in amber
+    # so it reads differently from an on-time one at a glance.
+    set_flash(message, "success" if status == "present" else "warning", seconds=3)
+    return message, "success"
 
 
 def get_display_state(conn, now=None):
@@ -687,28 +760,18 @@ def get_display_state(conn, now=None):
         "flash": state["flash"],
     }
 
-    if state["stage"] == "attendance_open" and state["class_id"]:
+    if state["stage"] in ("attendance_open", "class_ongoing") and state["class_id"]:
         today = now.strftime("%Y-%m-%d")
-        roster = conn.execute(
-            """
-            SELECT a.status
-            FROM enrollments e
-            JOIN students st ON st.student_id = e.student_id
-            LEFT JOIN attendance a
-                   ON a.student_id = st.student_id
-                  AND a.class_id = ?
-                  AND a.date = ?
-            WHERE e.class_id = ?
-            """,
-            (state["class_id"], today, state["class_id"]),
-        ).fetchall()
-        data["present_count"] = sum(1 for r in roster if r["status"])
+        roster, present_count, late_count, _excused_count, _absent_count = get_roster_for_date(conn, state["class_id"], today)
+        data["present_count"] = present_count
+        data["late_count"] = late_count
         data["total_students"] = len(roster)
 
     elif state["stage"] in ("session_summary", "session_summary_edit") and state["class_id"]:
         today = now.strftime("%Y-%m-%d")
-        roster, present_count, _late_count, _excused_count, _absent_count = get_roster_for_date(conn, state["class_id"], today)
+        roster, present_count, late_count, _excused_count, _absent_count = get_roster_for_date(conn, state["class_id"], today)
         data["present_count"] = present_count
+        data["late_count"] = late_count
         data["total_students"] = len(roster)
         data["roster"] = [
             {"student_id": r["student_id"], "name": f"{r['first_name']} {r['last_name']}", "status": r["status"]}
@@ -780,6 +843,11 @@ def login():
             session.clear()
             session["role"] = role
             session["user_id"] = user[user_id_key]
+            # Shown in the navbar (base.html) so it's always clear who's
+            # logged in — admins have no name columns, just a username.
+            session["display_name"] = (
+                user["username"] if role == "admin" else f"{user['first_name']} {user['last_name']}"
+            )
             return redirect(url_for(redirect_to))
 
         flash("Invalid username or password.", "error")
@@ -1128,7 +1196,13 @@ def admin():
     """Administrator landing page: one button per section (Teachers,
     Students, Classes, Rooms), each its own page — rather than one long
     page with everything on it."""
-    return render_template("admin.html")
+    conn = get_db()
+    counts = {
+        table: conn.execute(f"SELECT COUNT(*) AS c FROM {table}").fetchone()["c"]
+        for table in ("teachers", "students", "classes", "rooms")
+    }
+    conn.close()
+    return render_template("admin.html", counts=counts)
 
 
 @app.route("/admin/teachers")
@@ -1290,7 +1364,9 @@ def admin_add_teacher():
     username = request.form.get("username", "").strip()
     password = request.form.get("password", "")
     phone_number = request.form.get("phone_number", "").strip() or None
-    if not (rfid_tag and first_name and last_name and username and password):
+    if not rfid_tag:
+        flash("Scan the teacher's card first.", "error")
+    elif not (first_name and last_name and username and password):
         flash("All teacher fields, including login username/password, are required.", "error")
     else:
         conn = get_db()
@@ -1315,6 +1391,7 @@ def admin_update_teacher(teacher_id):
     first_name = request.form.get("first_name", "").strip()
     last_name = request.form.get("last_name", "").strip()
     phone_number = request.form.get("phone_number", "").strip() or None
+    teacher_context = request.form.get("teacher_context", type=int)
     if not (rfid_tag and first_name and last_name):
         flash("All teacher fields are required.", "error")
     else:
@@ -1329,6 +1406,8 @@ def admin_update_teacher(teacher_id):
         except sqlite3.IntegrityError:
             flash(f"RFID tag '{rfid_tag}' is already in use.", "error")
         conn.close()
+    if teacher_context:
+        return redirect(url_for("admin_teacher_detail", teacher_id=teacher_context))
     return redirect(url_for("admin_teachers"))
 
 
@@ -1361,7 +1440,7 @@ def admin_reset_teacher_password(teacher_id):
         conn.commit()
         conn.close()
         flash("Teacher's password has been reset.", "success")
-    return redirect(url_for("admin_teachers"))
+    return redirect(url_for("admin_teacher_detail", teacher_id=teacher_id))
 
 
 @app.route("/admin/students/add", methods=["POST"])
@@ -1374,7 +1453,9 @@ def admin_add_student():
     username = request.form.get("username", "").strip()
     password = request.form.get("password", "")
     phone_number = request.form.get("phone_number", "").strip() or None
-    if not (rfid_tag and first_name and last_name and section and username and password):
+    if not rfid_tag:
+        flash("Scan the student's card first.", "error")
+    elif not (first_name and last_name and section and username and password):
         flash("All student fields, including login username/password, are required.", "error")
     else:
         conn = get_db()
@@ -1385,7 +1466,7 @@ def admin_add_student():
                 (rfid_tag, first_name, last_name, section, username, generate_password_hash(password), phone_number),
             )
             conn.commit()
-            flash(f"Added student {first_name} {last_name}. Enroll them in a class from their Edit page.", "success")
+            flash(f"Added student {first_name} {last_name}.", "success")
         except sqlite3.IntegrityError:
             flash(f"RFID tag '{rfid_tag}' or username '{username}' is already in use.", "error")
         conn.close()
@@ -1718,7 +1799,7 @@ def admin_add_class():
         conn.commit()
         conn.close()
         flash(
-            f"Added class {subject_name}. Assign it to a teacher and schedule it below once you're ready.",
+            f"Added class {subject_name}. Assign it to a teacher and schedule it under Assign Class once you're ready.",
             "success",
         )
     return redirect(url_for("admin_classes"))
@@ -1755,13 +1836,15 @@ def admin_assign_class():
     subject_name = request.form.get("subject_name", "").strip()
     teacher_id = request.form.get("teacher_id", type=int)
     room_number = request.form.get("room_number", "").strip()
-    start_time = request.form.get("start_time", "").strip()
-    end_time = request.form.get("end_time", "").strip()
+    start_time = normalize_time_24h(request.form.get("start_time"))
+    end_time = normalize_time_24h(request.form.get("end_time"))
     attendance_window_minutes = request.form.get("attendance_window_minutes", type=int) or 15
     teacher_context = request.form.get("teacher_context", type=int)
 
     if not ((class_id or subject_name) and teacher_id):
         flash("Pick a class and a teacher to assign.", "error")
+    elif start_time is None or end_time is None:
+        flash("Enter times in 24-hour format (HH:MM), e.g. 08:00 or 13:30.", "error")
     elif bool(start_time) != bool(end_time):
         flash("Set both a start time and an end time, or leave both blank.", "error")
     elif start_time and start_time >= end_time:
@@ -1913,12 +1996,206 @@ def get_roster_for_date(conn, class_id, date_str):
     return roster, present_count, late_count, excused_count, absent_count
 
 
+# ---------------------------------------------------------------------------
+# Date-range filtering for attendance records — the teacher's Attendance
+# Records page, a teacher's per-student view, and the student dashboard all
+# read the same query params (?range=<preset>, or ?range=custom&start=
+# YYYY-MM-DD&end=YYYY-MM-DD) and render the same From/To + preset-chip
+# filter (date_range_filter in _macros.html), so picking a range works the
+# same way on every page.
+# ---------------------------------------------------------------------------
+
+ATTENDANCE_STATUSES = ("present", "late", "excused", "absent")
+
+
+def _parse_iso_date(value):
+    try:
+        return datetime.strptime((value or "").strip(), "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def _date_range_presets(today):
+    """(key, label, start, end) for each quick-pick chip; None = unbounded."""
+    week_start = today - timedelta(days=today.weekday())
+    month_start = today.replace(day=1)
+    next_month_start = (month_start + timedelta(days=32)).replace(day=1)
+    last_month_end = month_start - timedelta(days=1)
+    return [
+        ("today", "Today", today, today),
+        ("this_week", "This Week", week_start, week_start + timedelta(days=6)),
+        ("this_month", "This Month", month_start, next_month_start - timedelta(days=1)),
+        ("last_month", "Last Month", last_month_end.replace(day=1), last_month_end),
+        ("last_30_days", "Last 30 Days", today - timedelta(days=29), today),
+        ("all", "All Time", None, None),
+    ]
+
+
+def resolve_date_range(args, endpoint, default="this_month", **url_params):
+    """Reads the range query params off `args` and returns everything the
+    date_range_filter macro needs: the resolved start/end (date objects,
+    None meaning unbounded on that side), which preset chip is active (or
+    "custom"), a readable label, each chip's link, and `params` — the
+    query params that reproduce this exact range, for links elsewhere on
+    the page that should keep it. Chip links are built with
+    url_for(endpoint, **url_params) so switching ranges keeps whatever
+    else the page is filtered by (e.g. class_id)."""
+    presets = _date_range_presets(date.today())
+    key = args.get("range", "").strip()
+    if key == "custom":
+        start = _parse_iso_date(args.get("start"))
+        end = _parse_iso_date(args.get("end"))
+        if start and end and start > end:
+            start, end = end, start
+        # A custom pick that exactly matches a preset (e.g. the class
+        # dropdown resubmitting the form while "This Month" was active)
+        # keeps that preset's chip highlighted instead of "custom".
+        key = next((k for k, _label, s, e in presets if (s, e) == (start, end)), "custom")
+    else:
+        if key not in {p[0] for p in presets}:
+            key = default
+        start, end = next((s, e) for k, _label, s, e in presets if k == key)
+
+    if start and end:
+        label = fmt_date(start) if start == end else f"{fmt_date(start)} – {fmt_date(end)}"
+    elif start:
+        label = f"From {fmt_date(start)}"
+    elif end:
+        label = f"Up to {fmt_date(end)}"
+    else:
+        label = "All time"
+
+    start_iso = start.isoformat() if start else ""
+    end_iso = end.isoformat() if end else ""
+    return {
+        "key": key,
+        "start": start,
+        "end": end,
+        "start_iso": start_iso,
+        "end_iso": end_iso,
+        "label": label,
+        "params": {"range": key} if key != "custom" else {"range": "custom", "start": start_iso, "end": end_iso},
+        "presets": [
+            {"key": k, "label": lbl, "url": url_for(endpoint, range=k, **url_params)}
+            for k, lbl, _s, _e in presets
+        ],
+    }
+
+
+def _date_range_sql(date_range):
+    """(" AND date >= ? AND date <= ?", [params]) for whichever bounds are set."""
+    clauses, params = [], []
+    if date_range["start"]:
+        clauses.append("date >= ?")
+        params.append(date_range["start_iso"])
+    if date_range["end"]:
+        clauses.append("date <= ?")
+        params.append(date_range["end_iso"])
+    return "".join(f" AND {c}" for c in clauses), params
+
+
+def get_class_session_dates(conn, class_id, date_range):
+    """Every date within date_range this class actually held a session,
+    most recent first. There's no separate sessions table, so a date counts
+    as a session once anyone has an attendance row for it — which also
+    means nobody is counted absent for a day the class simply didn't meet."""
+    range_sql, range_params = _date_range_sql(date_range)
+    rows = conn.execute(
+        f"SELECT DISTINCT date FROM attendance WHERE class_id = ?{range_sql} ORDER BY date DESC",
+        (class_id, *range_params),
+    ).fetchall()
+    return [r["date"] for r in rows]
+
+
+def _empty_status_counts():
+    return {status: 0 for status in ATTENDANCE_STATUSES}
+
+
+def get_class_attendance_report(conn, class_id, date_range):
+    """One class's attendance across date_range: per-session counts,
+    per-student totals for every student currently enrolled, and overall
+    totals. Absence is filled in exactly the way get_roster_for_date()
+    does for a single day — an enrolled student with no row on a session
+    date is absent for it — so a session's counts here always match its
+    own roster when drilled into."""
+    session_dates = get_class_session_dates(conn, class_id, date_range)
+    students = conn.execute(
+        """
+        SELECT st.student_id, st.first_name, st.last_name, st.section
+        FROM enrollments e
+        JOIN students st ON st.student_id = e.student_id
+        WHERE e.class_id = ?
+        ORDER BY st.last_name, st.first_name
+        """,
+        (class_id,),
+    ).fetchall()
+    range_sql, range_params = _date_range_sql(date_range)
+    statuses = {
+        (r["student_id"], r["date"]): r["status"]
+        for r in conn.execute(
+            f"SELECT student_id, date, status FROM attendance WHERE class_id = ?{range_sql}",
+            (class_id, *range_params),
+        ).fetchall()
+    }
+
+    sessions = [{"date": d, "counts": _empty_status_counts()} for d in session_dates]
+    per_student = []
+    totals = _empty_status_counts()
+    for st in students:
+        counts = _empty_status_counts()
+        for s in sessions:
+            status = statuses.get((st["student_id"], s["date"]), "absent")
+            counts[status] += 1
+            s["counts"][status] += 1
+            totals[status] += 1
+        per_student.append({**dict(st), "counts": counts})
+
+    return {"sessions": sessions, "students": per_student, "totals": totals}
+
+
+def get_student_attendance_records(conn, student_id, classes, date_range):
+    """One student's status on every session date (see
+    get_class_session_dates()) of each class in `classes` (rows with
+    class_id/subject_name) within date_range, most recent first — absent
+    for a date the class met but they have no row for, the same rule as
+    get_class_attendance_report(). Returns (records, counts)."""
+    range_sql, range_params = _date_range_sql(date_range)
+    records = []
+    for c in classes:
+        own_rows = {
+            r["date"]: r
+            for r in conn.execute(
+                f"SELECT date, status, time_tapped FROM attendance WHERE student_id = ? AND class_id = ?{range_sql}",
+                (student_id, c["class_id"], *range_params),
+            ).fetchall()
+        }
+        for d in get_class_session_dates(conn, c["class_id"], date_range):
+            row = own_rows.get(d)
+            status = row["status"] if row else "absent"
+            records.append({
+                "class_id": c["class_id"],
+                "subject_name": c["subject_name"],
+                "date": d,
+                "status": status,
+                # An explicit "absent" row's time_tapped is just when a
+                # teacher recorded it, not a tap — don't show it as one.
+                "time_tapped": row["time_tapped"] if row and status != "absent" else None,
+            })
+    records.sort(key=lambda r: (r["date"], r["subject_name"]), reverse=True)
+
+    counts = _empty_status_counts()
+    for r in records:
+        counts[r["status"]] += 1
+    return records, counts
+
+
 @app.route("/dashboard")
 @login_required(role="teacher")
 def dashboard():
     """Teacher-facing dashboard: today's sessions for this teacher's classes
-    (with live/completed attendance counts), plus a filterable history of
-    past sessions across all of their classes."""
+    (with live/completed attendance counts), their class list, and the SMS
+    broadcast form. Past attendance lives on its own page,
+    dashboard_attendance(), rather than at the bottom of this one."""
     conn = get_db()
     teacher_id = session["user_id"]
     teacher = conn.execute("SELECT * FROM teachers WHERE teacher_id = ?", (teacher_id,)).fetchone()
@@ -1962,46 +2239,6 @@ def dashboard():
         "SELECT * FROM classes WHERE teacher_id = ? ORDER BY start_time", (teacher_id,)
     ).fetchall()
 
-    filter_class_id = request.args.get("class_id", type=int)
-    filter_date = request.args.get("date", "").strip()
-    if filter_class_id and all_classes and filter_class_id not in {c["class_id"] for c in all_classes}:
-        filter_class_id = None  # not this teacher's class
-
-    history_roster = None
-    history_counts = None
-    history_dates = []
-
-    if filter_class_id and filter_date:
-        history_roster, present_count, late_count, excused_count, absent_count = get_roster_for_date(conn, filter_class_id, filter_date)
-        history_counts = {"present": present_count, "late": late_count, "excused": excused_count, "absent": absent_count}
-    elif filter_class_id:
-        total_students = conn.execute(
-            "SELECT COUNT(*) AS c FROM enrollments WHERE class_id = ?", (filter_class_id,)
-        ).fetchone()["c"]
-        rows = conn.execute(
-            """
-            SELECT date,
-                   SUM(CASE WHEN status = 'present' THEN 1 ELSE 0 END) AS present_count,
-                   SUM(CASE WHEN status = 'late' THEN 1 ELSE 0 END) AS late_count,
-                   SUM(CASE WHEN status = 'excused' THEN 1 ELSE 0 END) AS excused_count
-            FROM attendance
-            WHERE class_id = ?
-            GROUP BY date
-            ORDER BY date DESC
-            """,
-            (filter_class_id,),
-        ).fetchall()
-        history_dates = [
-            {
-                "date": r["date"],
-                "present_count": r["present_count"],
-                "late_count": r["late_count"],
-                "excused_count": r["excused_count"],
-                "absent_count": total_students - r["present_count"] - r["late_count"] - r["excused_count"],
-            }
-            for r in rows
-        ]
-
     conn.close()
     return render_template(
         "dashboard.html",
@@ -2009,12 +2246,53 @@ def dashboard():
         today=today,
         today_sessions=today_sessions,
         all_classes=all_classes,
-        filter_class_id=filter_class_id,
-        filter_date=filter_date,
-        history_roster=history_roster,
-        history_counts=history_counts,
-        history_dates=history_dates,
         vapid_public_key=VAPID_PUBLIC_KEY,
+    )
+
+
+@app.route("/dashboard/attendance")
+@login_required(role="teacher")
+def dashboard_attendance():
+    """Attendance Records: one of this teacher's classes across any date
+    range (see resolve_date_range()) — overall totals, every session held
+    in that range, and every enrolled student's totals for it. ?date=
+    drills into one session's full roster, where each status can be
+    corrected. Defaults to the teacher's first class and this month, so
+    the page shows something useful the moment it's opened."""
+    teacher_id = session["user_id"]
+    conn = get_db()
+    all_classes = conn.execute(
+        "SELECT * FROM classes WHERE teacher_id = ? ORDER BY start_time", (teacher_id,)
+    ).fetchall()
+
+    class_id = request.args.get("class_id", type=int)
+    if class_id not in {c["class_id"] for c in all_classes}:
+        class_id = all_classes[0]["class_id"] if all_classes else None  # never another teacher's class
+    selected_class = next((c for c in all_classes if c["class_id"] == class_id), None)
+    date_range = resolve_date_range(request.args, "dashboard_attendance", class_id=class_id)
+
+    report = None
+    roster = None
+    roster_counts = None
+    roster_date = _parse_iso_date(request.args.get("date"))
+    if selected_class and roster_date:
+        roster, present_count, late_count, excused_count, absent_count = get_roster_for_date(
+            conn, class_id, roster_date.isoformat()
+        )
+        roster_counts = {"present": present_count, "late": late_count, "excused": excused_count, "absent": absent_count}
+    elif selected_class:
+        report = get_class_attendance_report(conn, class_id, date_range)
+
+    conn.close()
+    return render_template(
+        "dashboard_attendance.html",
+        all_classes=all_classes,
+        selected_class=selected_class,
+        date_range=date_range,
+        report=report,
+        roster=roster,
+        roster_counts=roster_counts,
+        roster_date=roster_date.isoformat() if roster_date else None,
     )
 
 
@@ -2079,9 +2357,9 @@ def dashboard_sms_broadcast():
 @login_required(role="teacher")
 def dashboard_attendance_update():
     """Lets a teacher correct one student's attendance status for a past
-    (or today's) date in one of their own classes — used by both the
-    Attendance History section on /dashboard and a student's monthly log
-    on dashboard_student_monthly(). Unlike the live session_summary_edit
+    (or today's) date in one of their own classes — used by both a
+    session's roster on dashboard_attendance() and a student's log on
+    dashboard_student_attendance(). Unlike the live session_summary_edit
     toggle (where absent means no row at all — there's nothing to
     correct or look back on there, it's just the default before a tap),
     an explicit correction here always writes a real row, absent
@@ -2097,8 +2375,7 @@ def dashboard_attendance_update():
     class_id = request.form.get("class_id", type=int)
     date_str = request.form.get("date", "").strip()
     status = request.form.get("status", "").strip()
-    redirect_to = request.form.get("redirect_to", "").strip()
-    month = request.form.get("month", "").strip()
+    next_url = request.form.get("next", "")
 
     conn = get_db()
     owns_class = conn.execute(
@@ -2108,7 +2385,7 @@ def dashboard_attendance_update():
         "SELECT 1 FROM enrollments WHERE student_id = ? AND class_id = ?", (student_id, class_id)
     ).fetchone()
 
-    if not (owns_class and is_enrolled and date_str and status in SUMMARY_TOGGLE_CYCLE):
+    if not (owns_class and is_enrolled and _parse_iso_date(date_str) and status in ATTENDANCE_STATUSES):
         flash("Couldn't update that attendance record.", "error")
     else:
         existing = conn.execute(
@@ -2132,9 +2409,13 @@ def dashboard_attendance_update():
         flash("Attendance updated.", "success")
     conn.close()
 
-    if redirect_to == "monthly":
-        return redirect(url_for("dashboard_student_monthly", class_id=class_id, student_id=student_id, month=month))
-    return redirect(url_for("dashboard", class_id=class_id, date=date_str))
+    # Back to whichever page the edit came from (its full path, filters
+    # and date range included) — but only a plain local /dashboard path,
+    # never another host, so `next` can't be used as an open redirect.
+    parsed = urllib.parse.urlparse(next_url)
+    if not parsed.scheme and not parsed.netloc and parsed.path.startswith("/dashboard"):
+        return redirect(next_url)
+    return redirect(url_for("dashboard_attendance", class_id=class_id, date=date_str))
 
 
 @app.route("/dashboard/classes/<int:class_id>")
@@ -2174,30 +2455,22 @@ def dashboard_class_roster(class_id):
         "class_roster.html",
         class_info=class_info,
         students=students,
-        back_url=url_for("dashboard"),
-        back_label="Back to Dashboard",
-        can_view_monthly=True,
+        breadcrumb=[("My Dashboard", url_for("dashboard"))],
+        can_view_attendance=True,
     )
 
 
 @app.route("/dashboard/classes/<int:class_id>/students/<int:student_id>")
 @login_required(role="teacher")
-def dashboard_student_monthly(class_id, student_id):
-    """A teacher's per-student, per-month attendance summary for one of
-    their own classes — the "View" button next to each student on the
-    class roster page (/dashboard/classes/<id>). Only present/late/
-    excused/absent rows that actually exist in the attendance table
-    count toward the totals and the day-by-day log; a day with no row
-    for this student isn't assumed absent — the class might simply not
-    have been held/tracked that day — the same convention already used
-    for a student's own history on /student-dashboard."""
+def dashboard_student_attendance(class_id, student_id):
+    """A teacher's per-student attendance log for one of their own classes,
+    over any date range (see resolve_date_range(), defaulting to this
+    month) — the "Attendance" button next to each student on the class
+    roster page and on Attendance Records. Lists every session the class
+    held in that range with this student's status for it (absent if they
+    have no row for a day the class met — see get_class_session_dates()),
+    each one correctable in place."""
     teacher_id = session["user_id"]
-    month = request.args.get("month", "").strip()
-    try:
-        month_date = datetime.strptime(month, "%Y-%m") if month else datetime.now()
-    except ValueError:
-        month_date = datetime.now()
-    month = month_date.strftime("%Y-%m")
 
     conn = get_db()
     class_info = conn.execute(
@@ -2222,34 +2495,18 @@ def dashboard_student_monthly(class_id, student_id):
         flash("That student isn't enrolled in this class.", "error")
         return redirect(url_for("dashboard_class_roster", class_id=class_id))
 
-    logs = conn.execute(
-        """
-        SELECT date, status, time_tapped
-        FROM attendance
-        WHERE student_id = ? AND class_id = ? AND date LIKE ?
-        ORDER BY date
-        """,
-        (student_id, class_id, f"{month}-%"),
-    ).fetchall()
+    date_range = resolve_date_range(
+        request.args, "dashboard_student_attendance", class_id=class_id, student_id=student_id
+    )
+    records, counts = get_student_attendance_records(conn, student_id, [class_info], date_range)
     conn.close()
 
-    counts = {"present": 0, "late": 0, "excused": 0, "absent": 0}
-    for row in logs:
-        counts[row["status"]] += 1
-
-    first_of_month = month_date.replace(day=1)
-    prev_month = (first_of_month - timedelta(days=1)).strftime("%Y-%m")
-    next_month = (first_of_month + timedelta(days=32)).replace(day=1).strftime("%Y-%m")
-
     return render_template(
-        "dashboard_student_monthly.html",
+        "dashboard_student_attendance.html",
         class_info=class_info,
         student=student,
-        month=month,
-        month_label=month_date.strftime("%B %Y"),
-        prev_month=prev_month,
-        next_month=next_month,
-        logs=logs,
+        date_range=date_range,
+        records=records,
         counts=counts,
     )
 
@@ -2296,43 +2553,29 @@ def admin_class_roster(class_id):
 
     source = request.args.get("source")
     if source == "teacher" and class_info["teacher_id"]:
-        back_url = url_for("admin_teacher_detail", teacher_id=class_info["teacher_id"])
-        back_label = "Back to Teacher"
+        breadcrumb = [
+            ("Admin", url_for("admin")),
+            ("Teachers", url_for("admin_teachers")),
+            (class_info["teacher_name"], url_for("admin_teacher_detail", teacher_id=class_info["teacher_id"])),
+        ]
     else:
-        back_url = url_for("admin_classes")
-        back_label = "Back to Classes"
+        breadcrumb = [("Admin", url_for("admin")), ("Classes", url_for("admin_classes"))]
 
     return render_template(
         "class_roster.html",
         class_info=class_info,
         students=students,
-        back_url=back_url,
-        back_label=back_label,
+        breadcrumb=breadcrumb,
     )
-
-
-def get_student_attendance_history(conn, student_id, class_id):
-    """Every date this student has an attendance row for this class, most
-    recent first — the per-student analogue of get_roster_for_date(), just
-    scoped to one student's own history in one class instead of a whole
-    class's roster on one date."""
-    return conn.execute(
-        """
-        SELECT date, status, time_tapped
-        FROM attendance
-        WHERE student_id = ? AND class_id = ?
-        ORDER BY date DESC
-        """,
-        (student_id, class_id),
-    ).fetchall()
 
 
 @app.route("/student-dashboard")
 @login_required(role="student")
 def student_dashboard():
     """Student-facing dashboard: the classes this student is enrolled in,
-    plus a filterable history of their own attendance across those
-    classes. Everything here is scoped to session["user_id"] — a student
+    plus their own attendance over any date range (see
+    resolve_date_range()), for one class or all of them at once.
+    Everything here is scoped to session["user_id"] — a student
     only ever sees their own enrollments and attendance, never anyone
     else's."""
     conn = get_db()
@@ -2353,17 +2596,14 @@ def student_dashboard():
     ).fetchall()
     enrolled_class_ids = {e["class_id"] for e in enrollments}
 
+    # No class picked means all of this student's classes at once.
     filter_class_id = request.args.get("class_id", type=int)
-    filter_date = request.args.get("date", "").strip()
-    if filter_class_id and filter_class_id not in enrolled_class_ids:
+    if filter_class_id not in enrolled_class_ids:
         filter_class_id = None  # not this student's class
+    date_range = resolve_date_range(request.args, "student_dashboard", class_id=filter_class_id)
 
-    history_rows = []
-    history_entry = None
-    if filter_class_id:
-        history_rows = get_student_attendance_history(conn, student_id, filter_class_id)
-        if filter_date:
-            history_entry = next((r for r in history_rows if r["date"] == filter_date), None)
+    history_classes = [e for e in enrollments if filter_class_id in (None, e["class_id"])]
+    history_records, history_counts = get_student_attendance_records(conn, student_id, history_classes, date_range)
 
     conn.close()
     return render_template(
@@ -2371,9 +2611,9 @@ def student_dashboard():
         student=student,
         enrollments=enrollments,
         filter_class_id=filter_class_id,
-        filter_date=filter_date,
-        history_rows=history_rows,
-        history_entry=history_entry,
+        date_range=date_range,
+        history_records=history_records,
+        history_counts=history_counts,
         vapid_public_key=VAPID_PUBLIC_KEY,
     )
 

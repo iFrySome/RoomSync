@@ -1,62 +1,118 @@
 {% extends "base.html" %}
+{% from "_macros.html" import breadcrumbs, time_input %}
 {% block title %}RoomSync - {{ teacher.first_name }} {{ teacher.last_name }}{% endblock %}
 
 {% block content %}
-<p class="meta"><a href="{{ url_for('admin_teachers') }}">&larr; Back to Teachers</a></p>
-<h1>{{ teacher.first_name }} {{ teacher.last_name }}</h1>
-<p class="meta">RFID Tag: {{ teacher.rfid_tag }}</p>
+{{ breadcrumbs([
+    ("Admin", url_for('admin')),
+    ("Teachers", url_for('admin_teachers')),
+    (teacher.first_name ~ " " ~ teacher.last_name, None),
+]) }}
+<div class="page-header">
+    <div>
+        <h1>{{ teacher.first_name }} {{ teacher.last_name }}</h1>
+        <p class="meta">Username: {{ teacher.username or "—" }}</p>
+    </div>
+</div>
 
-{% with messages = get_flashed_messages(with_categories=true) %}
-    {% for category, message in messages %}
-    <div class="flash flash-{{ category }}">{{ message }}</div>
-    {% endfor %}
-{% endwith %}
+<section class="admin-section">
+    <h2>Details</h2>
+    <form method="POST" action="{{ url_for('admin_update_teacher', teacher_id=teacher.teacher_id) }}" class="form-grid">
+        <input type="hidden" name="teacher_context" value="{{ teacher.teacher_id }}">
+        <div class="field field-wide">
+            <div class="field-label-row">
+                <label for="teacher-rfid">RFID Tag</label>
+                <span id="teacher-rfid-status" class="rfid-register-status"></span>
+            </div>
+            <div class="input-with-action">
+                <input name="rfid_tag" id="teacher-rfid" value="{{ teacher.rfid_tag }}" required>
+                <button type="button" class="btn btn-secondary rfid-register-btn" data-user-type="teacher" data-user-id="{{ teacher.teacher_id }}"
+                        data-input="teacher-rfid" data-status="teacher-rfid-status">Scan Card</button>
+            </div>
+        </div>
+        <div class="field">
+            <label for="teacher-first">First Name</label>
+            <input name="first_name" id="teacher-first" value="{{ teacher.first_name }}" required>
+        </div>
+        <div class="field">
+            <label for="teacher-last">Last Name</label>
+            <input name="last_name" id="teacher-last" value="{{ teacher.last_name }}" required>
+        </div>
+        <div class="field">
+            <label for="teacher-phone">Phone <span class="optional">(optional)</span></label>
+            <input type="tel" name="phone_number" id="teacher-phone" value="{{ teacher.phone_number or '' }}">
+        </div>
+        <div class="field field-action">
+            <button type="submit" class="btn btn-save">Save</button>
+        </div>
+    </form>
 
-<h2>Classes</h2>
-<p class="meta">
-    Adjust the room, start/end time, and attendance window for a class
-    already assigned to {{ teacher.first_name }} here. Once a class has a
-    room and start/end time, it meets every single day at that time —
-    there's no per-day schedule to arrange. Adding a brand new class, or
-    assigning one of {{ teacher.first_name }}'s classes to a different
-    teacher, is done from the Classes section on the main Admin page.
-</p>
+    <h3>Reset Password</h3>
+    <form method="POST" action="{{ url_for('admin_reset_teacher_password', teacher_id=teacher.teacher_id) }}" class="form-grid">
+        <div class="field field-fixed">
+            <label for="teacher-new-password">New Password</label>
+            <input type="password" name="new_password" id="teacher-new-password" autocomplete="new-password" required>
+        </div>
+        <div class="field field-action">
+            <button type="submit" class="btn btn-secondary">Reset Password</button>
+        </div>
+    </form>
+</section>
+
+<div class="section-header">
+    <h2>Classes</h2>
+    <a href="{{ url_for('admin_classes') }}#assign-class" class="btn btn-secondary btn-sm">Assign a Class</a>
+</div>
 
 {% for c in classes %}
 <section class="admin-section class-card">
-    <div class="class-card-header">
-        <span class="class-subject-input">{{ c.subject_name }}</span>
-        <select form="class-form-{{ c.class_id }}" name="room_number">
-            <option value="" {% if not c.room_number %}selected{% endif %}>No room yet</option>
-            {% for r in rooms %}
-            <option value="{{ r.room_name }}" {% if r.room_name == c.room_number %}selected{% endif %}>{{ r.room_name }}</option>
-            {% endfor %}
-        </select>
-        <input form="class-form-{{ c.class_id }}" type="time" name="start_time" value="{{ c.start_time or '' }}">
-        <input form="class-form-{{ c.class_id }}" type="time" name="end_time" value="{{ c.end_time or '' }}">
-        <input form="class-form-{{ c.class_id }}" type="number" min="1" name="attendance_window_minutes" value="{{ c.attendance_window_minutes }}" title="Attendance window (minutes)">
-        <button form="class-form-{{ c.class_id }}" type="submit" class="btn-save">Save</button>
-        <a href="{{ url_for('admin_class_roster', class_id=c.class_id, source='teacher') }}" class="btn-view btn-view-students">View Students</a>
-        <form method="POST" action="{{ url_for('admin_delete_class', class_id=c.class_id) }}" class="inline-form"
-              onsubmit="return confirm('Delete this class? This also removes its attendance records and enrollments.');">
-            <input type="hidden" name="teacher_context" value="{{ teacher.teacher_id }}">
-            <button type="submit" class="btn-delete">Delete Class</button>
-        </form>
+    <div class="section-header">
+        <h3 class="class-card-title">
+            {{ c.subject_name }}
+            {% if not c.start_time or not c.end_time %}<span class="pill pill-muted">Not scheduled</span>{% endif %}
+        </h3>
+        <div class="row-actions">
+            <a href="{{ url_for('admin_class_enroll', class_id=c.class_id) }}" class="btn-view">Students</a>
+            <form method="POST" action="{{ url_for('admin_delete_class', class_id=c.class_id) }}"
+                  onsubmit="return confirm('Delete this class? Its attendance records and enrollments are removed too.');">
+                <input type="hidden" name="teacher_context" value="{{ teacher.teacher_id }}">
+                <button type="submit" class="btn-delete">Delete</button>
+            </form>
+        </div>
     </div>
-    {% if not c.start_time or not c.end_time %}
-    <p class="meta">Not tappable yet — set a start and end time above to make it active every day.</p>
-    {% endif %}
-    <form id="class-form-{{ c.class_id }}" method="POST" action="{{ url_for('admin_assign_class') }}">
+    <form method="POST" action="{{ url_for('admin_assign_class') }}" class="form-grid">
         <input type="hidden" name="class_id" value="{{ c.class_id }}">
         <input type="hidden" name="teacher_id" value="{{ teacher.teacher_id }}">
         <input type="hidden" name="teacher_context" value="{{ teacher.teacher_id }}">
+        <div class="field">
+            <label for="class-{{ c.class_id }}-room">Room</label>
+            <select name="room_number" id="class-{{ c.class_id }}-room">
+                <option value="" {% if not c.room_number %}selected{% endif %}>No room</option>
+                {% for r in rooms %}
+                <option value="{{ r.room_name }}" {% if r.room_name == c.room_number %}selected{% endif %}>{{ r.room_name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="field field-narrow">
+            <label for="class-{{ c.class_id }}-start">Start</label>
+            {{ time_input("start_time", c.start_time, id="class-" ~ c.class_id ~ "-start") }}
+        </div>
+        <div class="field field-narrow">
+            <label for="class-{{ c.class_id }}-end">End</label>
+            {{ time_input("end_time", c.end_time, id="class-" ~ c.class_id ~ "-end") }}
+        </div>
+        <div class="field field-narrow">
+            <label for="class-{{ c.class_id }}-window">Window (min)</label>
+            <input type="number" min="1" name="attendance_window_minutes" id="class-{{ c.class_id }}-window" value="{{ c.attendance_window_minutes }}">
+        </div>
+        <div class="field field-action">
+            <button type="submit" class="btn btn-save">Save</button>
+        </div>
     </form>
 </section>
 {% else %}
-<p class="meta">
-    {{ teacher.first_name }} {{ teacher.last_name }} has no classes yet.
-    Assign one to them from the Classes section on the
-    <a href="{{ url_for('admin') }}">main Admin page</a>.
-</p>
+<p class="empty-state">No classes assigned yet.</p>
 {% endfor %}
+
+{% include "_rfid_register.html" %}
 {% endblock %}

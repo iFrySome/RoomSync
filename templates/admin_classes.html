@@ -1,92 +1,121 @@
 {% extends "base.html" %}
+{% from "_macros.html" import breadcrumbs, time_input %}
 {% block title %}RoomSync - Classes{% endblock %}
 
 {% block content %}
-<p class="meta"><a href="{{ url_for('admin') }}">&larr; Back to Admin</a></p>
-<h1>Classes</h1>
-<p class="meta">{{ classes|length }} total</p>
-
-{% with messages = get_flashed_messages(with_categories=true) %}
-    {% for category, message in messages %}
-    <div class="flash flash-{{ category }}">{{ message }}</div>
-    {% endfor %}
-{% endwith %}
+{{ breadcrumbs([("Admin", url_for('admin')), ("Classes", None)]) }}
+<div class="page-header">
+    <div>
+        <h1>Classes</h1>
+        <p class="meta">{{ classes|length }} total</p>
+    </div>
+    <div class="page-actions">
+        <a href="#add-class" class="btn btn-secondary">+ Add Class</a>
+        <a href="#assign-class" class="btn btn-primary">Assign Class</a>
+    </div>
+</div>
 
 <section class="admin-section">
-    <table class="roster-table admin-table">
+    {% if classes %}
+    <div class="table-toolbar">
+        <input type="search" class="table-search" data-table="classes-table" placeholder="Search classes" aria-label="Search classes">
+    </div>
+    {% endif %}
+    <div class="table-wrap">
+    <table class="roster-table" id="classes-table">
         <thead>
-            <tr><th>Subject</th><th>Teacher</th><th>Room</th><th>Start</th><th>End</th><th>Window (min)</th><th></th></tr>
+            <tr><th>Subject</th><th>Teacher</th><th>Room</th><th>Schedule</th><th>Window</th><th></th></tr>
         </thead>
         <tbody>
             {% for c in classes %}
             <tr>
-                <td>{{ c.subject_name }}</td>
-                <td>{{ c.teacher_name or "Unassigned" }}</td>
+                <td class="cell-strong">{{ c.subject_name }}</td>
+                <td>{% if c.teacher_name %}{{ c.teacher_name }}{% else %}<span class="pill pill-muted">Unassigned</span>{% endif %}</td>
                 <td>{{ c.room_number or "—" }}</td>
-                <td>{{ c.start_time or "—" }}</td>
-                <td>{{ c.end_time or "—" }}</td>
-                <td>{{ c.attendance_window_minutes }}</td>
-                <td class="admin-actions">
-                    <a href="{{ url_for('admin_class_roster', class_id=c.class_id, source='classes') }}" class="btn-view btn-view-students">View Students</a>
-                    <a href="{{ url_for('admin_class_enroll', class_id=c.class_id) }}" class="btn-view">Enroll Students</a>
-                    <form method="POST" action="{{ url_for('admin_delete_class', class_id=c.class_id) }}"
-                          class="inline-form" onsubmit="return confirm('Delete this class? This also removes its attendance records and enrollments.');">
-                        <button type="submit" class="btn-delete">Delete</button>
-                    </form>
+                <td>{{ c.start_time|time_range(c.end_time) }}</td>
+                <td>{{ c.attendance_window_minutes }} min</td>
+                <td class="cell-actions">
+                    <div class="row-actions">
+                        <a href="{{ url_for('admin_class_enroll', class_id=c.class_id) }}" class="btn-view">Students</a>
+                        <form method="POST" action="{{ url_for('admin_delete_class', class_id=c.class_id) }}"
+                              onsubmit='return confirm({{ ("Delete " ~ c.subject_name ~ "? Its attendance records and enrollments are removed too.")|tojson }});'>
+                            <button type="submit" class="btn-delete">Delete</button>
+                        </form>
+                    </div>
                 </td>
             </tr>
             {% else %}
-            <tr><td colspan="7">No classes yet.</td></tr>
+            <tr><td colspan="6" class="cell-empty">No classes yet.</td></tr>
             {% endfor %}
         </tbody>
     </table>
+    </div>
+</section>
 
-    <h3>Add a Class</h3>
-    <p class="meta">
-        Just the subject name — no teacher, room, or time yet. Assign it
-        below once you're ready.
-    </p>
-    <form method="POST" action="{{ url_for('admin_add_class') }}" class="admin-add-form">
-        <input name="subject_name" placeholder="Subject Name" required>
-        <button type="submit">Add Class</button>
+<section class="admin-section" id="add-class">
+    <h2>Add Class</h2>
+    <form method="POST" action="{{ url_for('admin_add_class') }}" class="form-grid">
+        <div class="field field-wide">
+            <label for="add-class-subject">Subject Name</label>
+            <input name="subject_name" id="add-class-subject" required>
+        </div>
+        <div class="field field-action">
+            <button type="submit" class="btn btn-primary">Add Class</button>
+        </div>
     </form>
+</section>
 
-    <h3>Assign Class</h3>
-    <p class="meta">
-        Pick a subject, a teacher, and a schedule. If that teacher — or a
-        different one — already teaches this subject, this adds a new
-        section instead of overwriting their existing one, as long as the
-        schedule doesn't conflict.
-    </p>
+<section class="admin-section" id="assign-class">
+    <h2>Assign Class</h2>
     {% if subjects and teachers %}
-    <form method="POST" action="{{ url_for('admin_assign_class') }}" class="admin-add-form">
-        <select name="subject_name" required>
-            <option value="" disabled selected>Class</option>
-            {% for subject in subjects %}
-            <option value="{{ subject }}">{{ subject }}</option>
-            {% endfor %}
-        </select>
-        <select name="teacher_id" required>
-            <option value="" disabled selected>Teacher</option>
-            {% for t in teachers %}
-            <option value="{{ t.teacher_id }}">{{ t.first_name }} {{ t.last_name }}</option>
-            {% endfor %}
-        </select>
-        <select name="room_number">
-            <option value="" selected>No room yet</option>
-            {% for r in rooms %}
-            <option value="{{ r.room_name }}">{{ r.room_name }}</option>
-            {% endfor %}
-        </select>
-        <input type="time" name="start_time">
-        <input type="time" name="end_time">
-        <input type="number" min="1" name="attendance_window_minutes" value="15" placeholder="Window (min)">
-        <button type="submit">Assign</button>
+    <form method="POST" action="{{ url_for('admin_assign_class') }}" class="form-grid">
+        <div class="field">
+            <label for="assign-subject">Class</label>
+            <select name="subject_name" id="assign-subject" required>
+                <option value="" disabled selected>Choose a class</option>
+                {% for subject in subjects %}
+                <option value="{{ subject }}">{{ subject }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="field">
+            <label for="assign-teacher">Teacher</label>
+            <select name="teacher_id" id="assign-teacher" required>
+                <option value="" disabled selected>Choose a teacher</option>
+                {% for t in teachers %}
+                <option value="{{ t.teacher_id }}">{{ t.first_name }} {{ t.last_name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="field">
+            <label for="assign-room">Room</label>
+            <select name="room_number" id="assign-room">
+                <option value="" selected>No room</option>
+                {% for r in rooms %}
+                <option value="{{ r.room_name }}">{{ r.room_name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="field field-narrow">
+            <label for="assign-start">Start</label>
+            {{ time_input("start_time", id="assign-start") }}
+        </div>
+        <div class="field field-narrow">
+            <label for="assign-end">End</label>
+            {{ time_input("end_time", id="assign-end") }}
+        </div>
+        <div class="field field-narrow">
+            <label for="assign-window">Window (min)</label>
+            <input type="number" min="1" name="attendance_window_minutes" id="assign-window" value="15">
+        </div>
+        <div class="field field-action">
+            <button type="submit" class="btn btn-primary">Assign</button>
+        </div>
     </form>
     {% elif not subjects %}
-    <p class="meta">Add a class first before assigning it.</p>
+    <p class="empty-state">Add a class first.</p>
     {% else %}
-    <p class="meta">Add a teacher first before assigning a class.</p>
+    <p class="empty-state">Add a teacher first.</p>
     {% endif %}
 </section>
 {% endblock %}

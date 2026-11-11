@@ -1,177 +1,103 @@
 {% extends "base.html" %}
+{% from "_macros.html" import breadcrumbs %}
 {% block title %}RoomSync - Students{% endblock %}
 
 {% block content %}
-<p class="meta"><a href="{{ url_for('admin') }}">&larr; Back to Admin</a></p>
-<h1>Students</h1>
-<p class="meta">{{ students|length }} total</p>
-
-{% with messages = get_flashed_messages(with_categories=true) %}
-    {% for category, message in messages %}
-    <div class="flash flash-{{ category }}">{{ message }}</div>
-    {% endfor %}
-{% endwith %}
+{{ breadcrumbs([("Admin", url_for('admin')), ("Students", None)]) }}
+<div class="page-header">
+    <div>
+        <h1>Students</h1>
+        <p class="meta">{{ students|length }} total</p>
+    </div>
+    <div class="page-actions">
+        <button type="button" class="btn btn-primary" data-open-dialog="add-student-dialog">+ Add Student</button>
+    </div>
+</div>
 
 <section class="admin-section">
-    <table class="roster-table admin-table">
+    {% if students %}
+    <div class="table-toolbar">
+        <input type="search" class="table-search" data-table="students-table" placeholder="Search students" aria-label="Search students">
+    </div>
+    {% endif %}
+    <div class="table-wrap">
+    <table class="roster-table" id="students-table">
         <thead>
-            <tr><th>RFID Tag</th><th>First Name</th><th>Last Name</th><th>Section</th><th>Username</th><th>Phone</th><th></th></tr>
+            <tr><th>Name</th><th>Section</th><th>RFID Tag</th><th>Username</th><th>Phone</th><th></th></tr>
         </thead>
         <tbody>
             {% for s in students %}
             <tr>
-                <td><input id="rfid-input-student-{{ s.student_id }}" form="student-form-{{ s.student_id }}" name="rfid_tag" value="{{ s.rfid_tag }}" required></td>
-                <td><input form="student-form-{{ s.student_id }}" name="first_name" value="{{ s.first_name }}" required></td>
-                <td><input form="student-form-{{ s.student_id }}" name="last_name" value="{{ s.last_name }}" required></td>
-                <td><input form="student-form-{{ s.student_id }}" name="section" value="{{ s.section }}" required></td>
+                <td class="cell-strong">{{ s.first_name }} {{ s.last_name }}</td>
+                <td>{{ s.section }}</td>
+                <td class="cell-mono">{{ s.rfid_tag }}</td>
                 <td>{{ s.username or "—" }}</td>
-                <td><input form="student-form-{{ s.student_id }}" name="phone_number" value="{{ s.phone_number or '' }}" placeholder="e.g. 09171234567"></td>
-                <td class="admin-actions">
-                    <a href="{{ url_for('admin_student_detail', student_id=s.student_id) }}" class="btn-view">Edit</a>
-                    <button form="student-form-{{ s.student_id }}" type="submit" class="btn-save">Save</button>
-                    <button type="button" class="btn-view rfid-register-btn" data-user-type="student" data-user-id="{{ s.student_id }}"
-                            data-input="rfid-input-student-{{ s.student_id }}" data-status="rfid-status-student-{{ s.student_id }}">Register RFID</button>
-                    <form method="POST" action="{{ url_for('admin_delete_student', student_id=s.student_id) }}"
-                          class="inline-form" onsubmit="return confirm('Delete this student?');">
-                        <button type="submit" class="btn-delete">Delete</button>
-                    </form>
-                    <span id="rfid-status-student-{{ s.student_id }}" class="rfid-register-status"></span>
+                <td>{{ s.phone_number or "—" }}</td>
+                <td class="cell-actions">
+                    <div class="row-actions">
+                        <a href="{{ url_for('admin_student_detail', student_id=s.student_id) }}" class="btn-view">Edit</a>
+                        <form method="POST" action="{{ url_for('admin_delete_student', student_id=s.student_id) }}"
+                              onsubmit='return confirm({{ ("Delete " ~ s.first_name ~ " " ~ s.last_name ~ "?")|tojson }});'>
+                            <button type="submit" class="btn-delete">Delete</button>
+                        </form>
+                    </div>
                 </td>
             </tr>
             {% else %}
-            <tr><td colspan="7">No students yet.</td></tr>
+            <tr><td colspan="6" class="cell-empty">No students yet.</td></tr>
             {% endfor %}
         </tbody>
     </table>
-    {% for s in students %}
-    <form id="student-form-{{ s.student_id }}" method="POST" action="{{ url_for('admin_update_student', student_id=s.student_id) }}"></form>
-    {% endfor %}
-
-    <h3>Add Student</h3>
-    <p class="meta">
-        This just creates the student's record — they aren't in any class
-        yet. Enroll them from their Edit page once you're ready. Username
-        and password are their login for the student portal
-        (/student-dashboard).
-    </p>
-    <form method="POST" action="{{ url_for('admin_add_student') }}" class="admin-add-form">
-        <input type="hidden" name="rfid_tag" id="add-student-rfid-tag" value="">
-        <span class="rfid-capture-group">
-            <button type="button" class="btn-view rfid-register-btn" data-user-type="student"
-                    data-input="add-student-rfid-tag" data-status="add-student-rfid-status">Scan RFID Card</button>
-            <span id="add-student-rfid-status" class="rfid-register-status">No card scanned yet</span>
-        </span>
-        <input name="first_name" placeholder="First Name" required>
-        <input name="last_name" placeholder="Last Name" required>
-        <input name="section" placeholder="Section (e.g. BSIT-3A)" required>
-        <input name="username" placeholder="Login Username" required>
-        <input type="password" name="password" placeholder="Login Password" required>
-        <input name="phone_number" placeholder="Phone Number (optional, for SMS)">
-        <button type="submit">Add Student</button>
-    </form>
+    </div>
 </section>
 
-<script>
-    // "Register RFID" — arms the server to capture the next /kiosk tap
-    // (real RC522 or the simulated kiosk page) and write it into this
-    // row's rfid_tag instead of it being processed as a normal tap. Only
-    // one registration is armed at a time; a button's poll notices if its
-    // own registration got superseded elsewhere and quietly resets.
-    (function () {
-        const POLL_INTERVAL_MS = 1500;
-        const START_URL = "{{ url_for('admin_rfid_register_start') }}";
-        const CANCEL_URL = "{{ url_for('admin_rfid_register_cancel') }}";
-        const STATUS_URL = "{{ url_for('api_rfid_register_status') }}";
+<dialog class="modal" id="add-student-dialog" aria-labelledby="add-student-title">
+    <form method="POST" action="{{ url_for('admin_add_student') }}">
+        <div class="modal-header">
+            <h2 id="add-student-title">Add Student</h2>
+            <button type="button" class="modal-close" data-close-dialog aria-label="Close">&times;</button>
+        </div>
+        <div class="modal-body form-grid">
+            <input type="hidden" name="rfid_tag" id="add-student-rfid-tag" value="">
+            <div class="field field-full">
+                <label>RFID Card</label>
+                <span class="rfid-capture-group">
+                    <button type="button" class="btn btn-secondary rfid-register-btn" data-user-type="student"
+                            data-input="add-student-rfid-tag" data-status="add-student-rfid-status">Scan Card</button>
+                    <span id="add-student-rfid-status" class="rfid-register-status">No card scanned</span>
+                </span>
+            </div>
+            <div class="field">
+                <label for="add-student-first">First Name</label>
+                <input name="first_name" id="add-student-first" required autofocus>
+            </div>
+            <div class="field">
+                <label for="add-student-last">Last Name</label>
+                <input name="last_name" id="add-student-last" required>
+            </div>
+            <div class="field">
+                <label for="add-student-section">Section</label>
+                <input name="section" id="add-student-section" required>
+            </div>
+            <div class="field">
+                <label for="add-student-phone">Phone <span class="optional">(optional)</span></label>
+                <input type="tel" name="phone_number" id="add-student-phone">
+            </div>
+            <div class="field">
+                <label for="add-student-username">Username</label>
+                <input name="username" id="add-student-username" autocomplete="off" required>
+            </div>
+            <div class="field">
+                <label for="add-student-password">Password</label>
+                <input type="password" name="password" id="add-student-password" autocomplete="new-password" required>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-close-dialog>Cancel</button>
+            <button type="submit" class="btn btn-primary">Add Student</button>
+        </div>
+    </form>
+</dialog>
 
-        document.querySelectorAll(".rfid-register-btn").forEach((btn) => {
-            const userType = btn.dataset.userType;
-            // No data-user-id at all (the Add form's "Scan RFID Card" button,
-            // for someone who doesn't have a row yet) => capture-only mode:
-            // the tap gets checked and returned, but never written to the DB.
-            const userId = btn.dataset.userId ? parseInt(btn.dataset.userId, 10) : null;
-            const input = document.getElementById(btn.dataset.input);
-            const statusEl = document.getElementById(btn.dataset.status);
-            let pollTimer = null;
-
-            function stopPolling() {
-                if (pollTimer) {
-                    clearInterval(pollTimer);
-                    pollTimer = null;
-                }
-            }
-
-            function setWaiting(waiting) {
-                btn.dataset.waiting = waiting ? "1" : "0";
-                btn.textContent = waiting ? "Cancel" : "Register RFID";
-            }
-
-            function setStatus(text, cls) {
-                statusEl.textContent = text || "";
-                statusEl.className = "rfid-register-status" + (cls ? " " + cls : "");
-            }
-
-            function poll() {
-                pollTimer = setInterval(() => {
-                    fetch(STATUS_URL)
-                        .then((r) => r.json())
-                        .then((state) => {
-                            const isThisRow = state.user_type === userType && state.user_id === userId;
-                            if (state.active && state.status === "waiting" && isThisRow) {
-                                return; // still waiting on this row's tap
-                            }
-                            stopPolling();
-                            setWaiting(false);
-                            if (isThisRow && state.status === "success") {
-                                input.value = state.tag;
-                                setStatus((userId === null ? "Captured: " : "Registered: ") + state.tag, "rfid-register-success");
-                            } else if (isThisRow && state.status === "error") {
-                                setStatus(state.message || "Registration failed.", "rfid-register-error");
-                            } else {
-                                // A different row took over the single registration slot, or it was cancelled.
-                                setStatus("");
-                            }
-                        })
-                        .catch(() => {
-                            stopPolling();
-                            setWaiting(false);
-                            setStatus("Lost connection while waiting for a tap.", "rfid-register-error");
-                        });
-                }, POLL_INTERVAL_MS);
-            }
-
-            btn.addEventListener("click", () => {
-                if (btn.dataset.waiting === "1") {
-                    stopPolling();
-                    setWaiting(false);
-                    setStatus("");
-                    fetch(CANCEL_URL, { method: "POST" });
-                    return;
-                }
-
-                setStatus("");
-                setWaiting(true);
-                setStatus("Tap the card now…");
-                const body = { user_type: userType };
-                if (userId !== null) body.user_id = userId;
-                fetch(START_URL, {
-                    method: "POST",
-                    body: new URLSearchParams(body),
-                })
-                    .then((r) => r.json())
-                    .then((res) => {
-                        if (!res.ok) {
-                            setWaiting(false);
-                            setStatus(res.error || "Could not start registration.", "rfid-register-error");
-                            return;
-                        }
-                        poll();
-                    })
-                    .catch(() => {
-                        setWaiting(false);
-                        setStatus("Could not start registration.", "rfid-register-error");
-                    });
-            });
-        });
-    })();
-</script>
+{% include "_rfid_register.html" %}
 {% endblock %}

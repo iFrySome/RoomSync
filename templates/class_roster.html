@@ -1,41 +1,48 @@
 {% extends "base.html" %}
+{% from "_macros.html" import breadcrumbs %}
 {% block title %}RoomSync - {{ class_info.subject_name }} Roster{% endblock %}
 
 {% block content %}
-<p class="meta"><a href="{{ back_url }}">&larr; {{ back_label }}</a></p>
-<h1>{{ class_info.subject_name }}</h1>
-<p class="meta">
-    {{ class_info.teacher_name or "Unassigned" }}
-    &middot; Room {{ class_info.room_number or "—" }}
-    &middot; {{ (class_info.start_time ~ "–" ~ class_info.end_time) if (class_info.start_time and class_info.end_time) else "time not set" }}
-</p>
-<p class="meta">{{ students|length }} enrolled</p>
+{{ breadcrumbs(breadcrumb + [(class_info.subject_name, None)]) }}
+<div class="page-header">
+    <div>
+        <h1>{{ class_info.subject_name }}</h1>
+        <p class="meta">
+            {{ class_info.teacher_name or "Unassigned" }}
+            &middot; {{ class_info.room_number or "No room" }}
+            &middot; {{ class_info.start_time|time_range(class_info.end_time) }}
+            &middot; {{ students|length }} enrolled
+        </p>
+    </div>
+    {% if can_view_attendance %}
+    <div class="page-actions">
+        <a href="{{ url_for('dashboard_attendance', class_id=class_info.class_id) }}" class="btn btn-primary">Attendance Records</a>
+    </div>
+    {% endif %}
+</div>
 
-{% with messages = get_flashed_messages(with_categories=true) %}
-    {% for category, message in messages %}
-    <div class="flash flash-{{ category }}">{{ message }}</div>
-    {% endfor %}
-{% endwith %}
-
-<table class="roster-table admin-table">
-    <thead>
-        <tr><th>First Name</th><th>Last Name</th><th>Section</th>{% if can_view_monthly %}<th></th>{% endif %}</tr>
-    </thead>
-    <tbody>
-        {% for s in students %}
-        <tr>
-            <td>{{ s.first_name }}</td>
-            <td>{{ s.last_name }}</td>
-            <td>{{ s.section }}</td>
-            {% if can_view_monthly %}
-            <td class="admin-actions">
-                <a href="{{ url_for('dashboard_student_monthly', class_id=class_info.class_id, student_id=s.student_id) }}" class="btn-view">View</a>
-            </td>
-            {% endif %}
-        </tr>
-        {% else %}
-        <tr><td colspan="{{ 4 if can_view_monthly else 3 }}">No students enrolled in this class yet.</td></tr>
-        {% endfor %}
-    </tbody>
-</table>
+<section class="admin-section">
+    <div class="table-wrap">
+    <table class="roster-table">
+        <thead>
+            <tr><th>Name</th><th>Section</th>{% if can_view_attendance %}<th></th>{% endif %}</tr>
+        </thead>
+        <tbody>
+            {% for s in students %}
+            <tr>
+                <td class="cell-strong">{{ s.first_name }} {{ s.last_name }}</td>
+                <td>{{ s.section }}</td>
+                {% if can_view_attendance %}
+                <td class="cell-actions">
+                    <a href="{{ url_for('dashboard_student_attendance', class_id=class_info.class_id, student_id=s.student_id) }}" class="btn-view">Attendance</a>
+                </td>
+                {% endif %}
+            </tr>
+            {% else %}
+            <tr><td colspan="{{ 3 if can_view_attendance else 2 }}" class="cell-empty">No students enrolled yet.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</section>
 {% endblock %}

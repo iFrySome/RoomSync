@@ -1,36 +1,42 @@
 {% extends "base.html" %}
-{% block title %}RoomSync - Enroll Students - {{ class_info.subject_name }}{% endblock %}
+{% from "_macros.html" import breadcrumbs %}
+{% block title %}RoomSync - {{ class_info.subject_name }} Students{% endblock %}
 
 {% block content %}
-<p class="meta"><a href="{{ url_for('admin_classes') }}">&larr; Back to Classes</a></p>
-<h1>Enroll Students</h1>
-<p class="meta">
-    {{ class_info.subject_name }} &middot; {{ class_info.teacher_name or "Unassigned" }}
-    &middot; Room {{ class_info.room_number or "—" }}
-    &middot; {{ (class_info.start_time ~ "–" ~ class_info.end_time) if (class_info.start_time and class_info.end_time) else "time not set" }}
-</p>
-
-{% with messages = get_flashed_messages(with_categories=true) %}
-    {% for category, message in messages %}
-    <div class="flash flash-{{ category }}">{{ message }}</div>
-    {% endfor %}
-{% endwith %}
+{{ breadcrumbs([
+    ("Admin", url_for('admin')),
+    ("Classes", url_for('admin_classes')),
+    (class_info.subject_name, None),
+]) }}
+<div class="page-header">
+    <div>
+        <h1>{{ class_info.subject_name }}</h1>
+        <p class="meta">
+            {{ class_info.teacher_name or "Unassigned" }}
+            &middot; {{ class_info.room_number or "No room" }}
+            &middot; {{ class_info.start_time|time_range(class_info.end_time) }}
+        </p>
+    </div>
+</div>
 
 <section class="admin-section">
-    <h2>Currently Enrolled</h2>
-    <table class="roster-table admin-table">
+    <div class="section-header">
+        <h2>Students</h2>
+        <span class="meta">{{ enrolled|length }} enrolled</span>
+    </div>
+    <div class="table-wrap">
+    <table class="roster-table">
         <thead>
-            <tr><th>First Name</th><th>Last Name</th><th>Section</th><th></th></tr>
+            <tr><th>Name</th><th>Section</th><th></th></tr>
         </thead>
         <tbody>
             {% for s in enrolled %}
             <tr>
-                <td>{{ s.first_name }}</td>
-                <td>{{ s.last_name }}</td>
+                <td class="cell-strong">{{ s.first_name }} {{ s.last_name }}</td>
                 <td>{{ s.section }}</td>
-                <td class="admin-actions">
+                <td class="cell-actions">
                     <form method="POST" action="{{ url_for('admin_unenroll_student', student_id=s.student_id) }}"
-                          class="inline-form" onsubmit="return confirm('Remove {{ s.first_name }} from {{ class_info.subject_name }}? Their attendance history for it is kept.');">
+                          class="inline-form" onsubmit='return confirm({{ ("Remove " ~ s.first_name ~ " from " ~ class_info.subject_name ~ "? Their attendance history is kept.")|tojson }});'>
                         <input type="hidden" name="class_id" value="{{ class_info.class_id }}">
                         <input type="hidden" name="class_context" value="{{ class_info.class_id }}">
                         <button type="submit" class="btn-delete">Unenroll</button>
@@ -38,26 +44,32 @@
                 </td>
             </tr>
             {% else %}
-            <tr><td colspan="4">No students enrolled yet.</td></tr>
+            <tr><td colspan="3" class="cell-empty">No students enrolled yet.</td></tr>
             {% endfor %}
         </tbody>
     </table>
+    </div>
 
     <h3>Enroll a Student</h3>
     {% if not class_info.start_time or not class_info.end_time %}
-    <p class="meta">This class has no schedule set yet — assign it a room and time from the Classes page before enrolling students.</p>
+    <p class="empty-state">Set a schedule for this class first. <a href="{{ url_for('admin_classes') }}#assign-class">Assign Class</a></p>
     {% elif enrollable_students %}
-    <form method="POST" action="{{ url_for('admin_class_enroll_add', class_id=class_info.class_id) }}" class="admin-add-form">
-        <select name="student_id" required>
-            <option value="" disabled selected>Student</option>
-            {% for s in enrollable_students %}
-            <option value="{{ s.student_id }}">{{ s.first_name }} {{ s.last_name }} ({{ s.section }})</option>
-            {% endfor %}
-        </select>
-        <button type="submit">Enroll</button>
+    <form method="POST" action="{{ url_for('admin_class_enroll_add', class_id=class_info.class_id) }}" class="form-grid">
+        <div class="field field-wide">
+            <label for="enroll-student">Student</label>
+            <select name="student_id" id="enroll-student" required>
+                <option value="" disabled selected>Choose a student</option>
+                {% for s in enrollable_students %}
+                <option value="{{ s.student_id }}">{{ s.first_name }} {{ s.last_name }} ({{ s.section }})</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="field field-action">
+            <button type="submit" class="btn btn-primary">Enroll</button>
+        </div>
     </form>
     {% else %}
-    <p class="meta">Every student is already enrolled in this class.</p>
+    <p class="empty-state">Every student is already enrolled.</p>
     {% endif %}
 </section>
 {% endblock %}

@@ -1,55 +1,61 @@
 {% extends "base.html" %}
+{% from "_macros.html" import stat_row %}
 {% block title %}RoomSync - Attendance Summary{% endblock %}
 
 {% block content %}
-<h1>End-of-Session Attendance Summary</h1>
-<p class="meta">Date: {{ today }}</p>
-
-<form method="GET" class="class-picker">
-    <label for="class_id">Class:</label>
-    <select name="class_id" id="class_id" onchange="this.form.submit()">
-        {% for c in classes %}
-        <option value="{{ c.class_id }}" {% if selected_class and c.class_id == selected_class.class_id %}selected{% endif %}>
-            {{ c.subject_name }} ({{ (c.start_time ~ "-" ~ c.end_time) if (c.start_time and c.end_time) else "time not set" }})
-        </option>
-        {% endfor %}
-    </select>
-</form>
+<div class="page-header">
+    <div>
+        <h1>Today's Summary</h1>
+        <p class="meta">{{ today|fmt_date }}</p>
+    </div>
+    {% if classes %}
+    <form method="GET" class="form-grid filter-form">
+        <div class="field">
+            <label for="class_id">Class</label>
+            <select name="class_id" id="class_id" onchange="this.form.submit()">
+                {% for c in classes %}
+                <option value="{{ c.class_id }}" {% if selected_class and c.class_id == selected_class.class_id %}selected{% endif %}>
+                    {{ c.subject_name }} ({{ c.start_time|time_range(c.end_time) }})
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+    </form>
+    {% endif %}
+</div>
 
 {% if selected_class %}
-    <div class="card">
-        <h2>{{ selected_class.subject_name }}</h2>
-        <p class="meta">{{ selected_class.teacher_name }} &middot; Room {{ selected_class.room_number }}</p>
+<section class="admin-section">
+    <div class="section-header">
+        <div>
+            <h2>{{ selected_class.subject_name }}</h2>
+            <p class="meta">{{ selected_class.teacher_name }} &middot; {{ selected_class.room_number or "No room" }} &middot; {{ selected_class.start_time|time_range(selected_class.end_time) }}</p>
+        </div>
     </div>
 
-    <div class="summary-stats">
-        <div class="stat stat-present">Present<span>{{ present_count }}</span></div>
-        <div class="stat stat-late">Late<span>{{ late_count }}</span></div>
-        <div class="stat stat-excused">Excused<span>{{ excused_count }}</span></div>
-        <div class="stat stat-absent">Absent<span>{{ absent_count }}</span></div>
-    </div>
+    {{ stat_row({"present": present_count, "late": late_count, "excused": excused_count, "absent": absent_count}) }}
 
+    <div class="table-wrap">
     <table class="roster-table">
         <thead>
-            <tr>
-                <th>Name</th>
-                <th>Section</th>
-                <th>Status</th>
-                <th>Time Tapped</th>
-            </tr>
+            <tr><th>Name</th><th>Section</th><th>Status</th><th>Time Tapped</th></tr>
         </thead>
         <tbody>
             {% for r in roster %}
-            <tr class="status-{{ r.status }}">
-                <td>{{ r.first_name }} {{ r.last_name }}</td>
+            <tr>
+                <td class="cell-strong">{{ r.first_name }} {{ r.last_name }}</td>
                 <td>{{ r.section }}</td>
                 <td><span class="pill pill-{{ r.status }}">{{ r.status|upper }}</span></td>
-                <td>{{ r.time_tapped or "-" }}</td>
+                <td>{{ r.time_tapped if r.time_tapped and r.status != "absent" else "—" }}</td>
             </tr>
+            {% else %}
+            <tr><td colspan="4" class="cell-empty">No students enrolled.</td></tr>
             {% endfor %}
         </tbody>
     </table>
+    </div>
+</section>
 {% else %}
-    <p>No classes found. Seed the database first.</p>
+<p class="empty-state">No classes yet.</p>
 {% endif %}
 {% endblock %}

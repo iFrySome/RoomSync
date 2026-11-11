@@ -1,28 +1,34 @@
 {% extends "base.html" %}
 {% block title %}RoomSync - Login{% endblock %}
 
+{# Shown inside the login card below instead of above it. #}
+{% block flashes %}{% endblock %}
+
 {% block content %}
 <div class="card login-card">
-    <h1>Login</h1>
+    <h1>Log in</h1>
+
+    <div class="login-tabs" role="tablist">
+        <button type="button" id="tab-teacher" role="tab" class="login-tab {{ 'active' if active_role == 'teacher' else '' }}">Teacher</button>
+        <button type="button" id="tab-student" role="tab" class="login-tab {{ 'active' if active_role == 'student' else '' }}">Student</button>
+        <button type="button" id="tab-admin" role="tab" class="login-tab {{ 'active' if active_role == 'admin' else '' }}">Admin</button>
+    </div>
 
     {% with messages = get_flashed_messages(with_categories=true) %}
         {% for category, message in messages %}
-        <div class="flash flash-{{ category }}">{{ message }}</div>
+        <div class="flash flash-{{ category }}" role="status">
+            <span>{{ message }}</span>
+            <button type="button" class="flash-close" aria-label="Dismiss">&times;</button>
+        </div>
         {% endfor %}
     {% endwith %}
-
-    <div class="login-tabs">
-        <button type="button" id="tab-teacher" class="login-tab {{ 'active' if active_role == 'teacher' else '' }}">Teacher Login</button>
-        <button type="button" id="tab-student" class="login-tab {{ 'active' if active_role == 'student' else '' }}">Student Login</button>
-        <button type="button" id="tab-admin" class="login-tab {{ 'active' if active_role == 'admin' else '' }}">Admin Login</button>
-    </div>
 
     <form method="POST" action="{{ url_for('login') }}" class="login-form">
         <input type="hidden" name="role" id="role-input" value="{{ active_role }}">
         <label for="username">Username</label>
-        <input type="text" id="username" name="username" required autofocus>
+        <input type="text" id="username" name="username" autocomplete="username" required autofocus>
         <label for="password">Password</label>
-        <input type="password" id="password" name="password" required>
+        <input type="password" id="password" name="password" autocomplete="current-password" required>
         <button type="submit" id="login-submit">Log in as {{ {'admin': 'Admin', 'student': 'Student'}.get(active_role, 'Teacher') }}</button>
     </form>
 </div>
@@ -30,22 +36,24 @@
 <script>
     const roleInput = document.getElementById("role-input");
     const submitBtn = document.getElementById("login-submit");
-    const tabTeacher = document.getElementById("tab-teacher");
-    const tabStudent = document.getElementById("tab-student");
-    const tabAdmin = document.getElementById("tab-admin");
-
+    const tabs = {
+        teacher: document.getElementById("tab-teacher"),
+        student: document.getElementById("tab-student"),
+        admin: document.getElementById("tab-admin"),
+    };
     const ROLE_LABELS = { admin: "Admin", student: "Student", teacher: "Teacher" };
 
     function setRole(role) {
         roleInput.value = role;
-        tabTeacher.classList.toggle("active", role === "teacher");
-        tabStudent.classList.toggle("active", role === "student");
-        tabAdmin.classList.toggle("active", role === "admin");
+        Object.entries(tabs).forEach(([key, tab]) => {
+            tab.classList.toggle("active", key === role);
+            tab.setAttribute("aria-selected", key === role ? "true" : "false");
+        });
         submitBtn.textContent = `Log in as ${ROLE_LABELS[role]}`;
+        document.getElementById("username").focus();
     }
 
-    tabTeacher.onclick = () => setRole("teacher");
-    tabStudent.onclick = () => setRole("student");
-    tabAdmin.onclick = () => setRole("admin");
+    Object.entries(tabs).forEach(([role, tab]) => { tab.onclick = () => setRole(role); });
+    tabs[roleInput.value].setAttribute("aria-selected", "true");
 </script>
 {% endblock %}
