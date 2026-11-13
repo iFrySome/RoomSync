@@ -19,6 +19,7 @@
             ('admin_students', 'Students', ['admin_students', 'admin_student_detail']),
             ('admin_classes', 'Classes', ['admin_classes', 'admin_class_roster', 'admin_class_enroll']),
             ('admin_rooms', 'Rooms', ['admin_rooms']),
+            ('admin_student_report', 'Reports', ['admin_student_report']),
             ('summary', "Today's Summary", ['summary']),
             ('index', 'Display', ['index']),
             ('kiosk', 'RFID Kiosk', ['kiosk']),
@@ -28,6 +29,7 @@
         {%- set nav_items = [
             ('dashboard', 'My Dashboard', ['dashboard', 'dashboard_class_roster']),
             ('dashboard_attendance', 'Attendance Records', ['dashboard_attendance', 'dashboard_student_attendance']),
+            ('dashboard_student_report', 'Reports', ['dashboard_student_report']),
             ('index', 'Display', ['index']),
         ] -%}
     {%- elif role == 'student' -%}
@@ -86,6 +88,53 @@
             if (closeBtn && el.classList.contains("flash-success")) setTimeout(dismiss, 6000);
         });
 
+        // Sliding red pill: behind the active link of the menu bar and of the
+        // date-range chips (Attendance Records, the student dashboard), it
+        // slides to the clicked link, then the new page loads (~0.3 s).
+        document.querySelectorAll(".navbar-links, .chip-row").forEach((links) => {
+            const original = links.querySelector("a.active");
+            if (!original) return;
+            const pill = document.createElement("span");
+            pill.className = "nav-indicator";
+            pill.setAttribute("aria-hidden", "true");
+            links.prepend(pill);
+            links.classList.add("has-indicator");
+
+            function moveTo(a, animate) {
+                if (!a) { pill.style.opacity = "0"; return; }
+                if (!animate) pill.style.transition = "none";
+                pill.style.width = a.offsetWidth + "px";
+                pill.style.height = a.offsetHeight + "px";
+                pill.style.transform = `translate(${a.offsetLeft}px, ${a.offsetTop}px)`;
+                pill.style.opacity = "1";
+                if (!animate) { void pill.offsetWidth; pill.style.transition = ""; }
+            }
+
+            function reset() {
+                links.querySelectorAll("a.active").forEach((a) => a.classList.remove("active"));
+                if (original) original.classList.add("active");
+                moveTo(original, false);
+            }
+
+            reset();
+            window.addEventListener("resize", () => moveTo(links.querySelector("a.active"), false));
+            // Coming back with the Back button restores this page as it was left.
+            window.addEventListener("pageshow", (event) => { if (event.persisted) reset(); });
+
+            const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+            links.querySelectorAll("a").forEach((a) => {
+                a.addEventListener("click", (event) => {
+                    if (!original || reduceMotion || a === original || event.button !== 0 ||
+                        event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+                    event.preventDefault();
+                    original.classList.remove("active");
+                    a.classList.add("active");
+                    moveTo(a, true);
+                    setTimeout(() => { window.location.href = a.href; }, 300);
+                });
+            });
+        });
+
         // Popups: <button data-open-dialog="<dialog id>"> opens a
         // <dialog class="modal">; anything with data-close-dialog inside it,
         // Esc, or a click on the dimmed background closes it.
@@ -126,16 +175,153 @@
             });
         });
 
-        // 24-hour time fields (time_input in _macros.html): tidy loose
-        // entries into HH:MM as soon as the field loses focus — "8:00" ->
-        // "08:00", "1330" -> "13:30" — so what's shown always matches the
-        // format used everywhere else. app.py normalizes the same way.
-        document.querySelectorAll("input.time-24h").forEach((input) => {
-            input.addEventListener("blur", () => {
-                const match = input.value.trim().match(/^([01]?\d|2[0-3]):?([0-5]\d)$/);
-                if (match) input.value = `${match[1].padStart(2, "0")}:${match[2]}`;
+        // 24-hour time pickers (time_input in _macros.html): the button
+        // opens two scroll wheels, hours 00–23 and minutes 00–59. The row in
+        // the middle band is the pick; scrolling, clicking a number, or the
+        // arrow keys change it. The value is only written once the wheels
+        // are actually touched (or Done is pressed), so just opening an
+        // empty picker doesn't fill it in.
+        (function () {
+            const ROW = 40;  // must match .time-wheel-item height in style.css
+            const pad = (n) => String(n).padStart(2, "0");
+            let openPicker = null;
+
+            document.querySelectorAll(".time-picker").forEach((picker) => {
+                const hidden = picker.querySelector(".time-picker-value");
+                const trigger = picker.querySelector(".time-picker-trigger");
+                const display = picker.querySelector(".time-picker-display");
+                const panel = picker.querySelector(".time-picker-panel");
+                const wheels = Array.from(picker.querySelectorAll(".time-wheel"));
+                let touched = false;
+
+                wheels.forEach((wheel) => {
+                    const count = wheel.dataset.unit === "hour" ? 24 : 60;
+                    for (let i = 0; i < count; i++) {
+                        const item = document.createElement("div");
+                        item.className = "time-wheel-item";
+                        item.setAttribute("role", "option");
+                        item.textContent = pad(i);
+                        item.addEventListener("click", () => {
+                            touched = true;
+                            wheel.scrollTo({ top: i * ROW, behavior: "smooth" });
+                        });
+                        wheel.appendChild(item);
+                    }
+                });
+
+                const indexOf = (wheel) =>
+                    Math.max(0, Math.min(wheel.children.length - 1, Math.round(wheel.scrollTop / ROW)));
+
+                function highlight(wheel) {
+                    const idx = indexOf(wheel);
+                    Array.from(wheel.children).forEach((item, i) => {
+                        const on = i === idx;
+                        item.classList.toggle("selected", on);
+                        item.setAttribute("aria-selected", on ? "true" : "false");
+                    });
+                }
+
+                function commit() {
+                    const value = `${pad(indexOf(wheels[0]))}:${pad(indexOf(wheels[1]))}`;
+                    hidden.value = value;
+                    display.textContent = value;
+                    trigger.classList.add("has-value");
+                }
+
+                function open() {
+                    if (openPicker && openPicker !== close) openPicker();
+                    const match = hidden.value.match(/^(\d{1,2}):(\d{2})$/);
+                    const [h, m] = match ? [Number(match[1]), Number(match[2])] : [8, 0];
+                    panel.hidden = false;
+                    trigger.setAttribute("aria-expanded", "true");
+                    wheels[0].scrollTop = h * ROW;
+                    wheels[1].scrollTop = m * ROW;
+                    wheels.forEach(highlight);
+                    // Open upward / align right when it would run off-screen.
+                    panel.classList.remove("open-up", "align-right");
+                    const box = panel.getBoundingClientRect();
+                    if (box.bottom > window.innerHeight - 8 &&
+                        trigger.getBoundingClientRect().top > box.height + 16) panel.classList.add("open-up");
+                    if (box.right > document.documentElement.clientWidth - 8) panel.classList.add("align-right");
+                    touched = false;
+                    openPicker = close;
+                    wheels[0].focus({ preventScroll: true });
+                }
+
+                function close() {
+                    if (touched && !panel.hidden) commit();  // keep a just-scrolled pick
+                    panel.hidden = true;
+                    touched = false;
+                    trigger.setAttribute("aria-expanded", "false");
+                    if (openPicker === close) openPicker = null;
+                }
+
+                if (hidden.value) trigger.classList.add("has-value");
+                trigger.addEventListener("click", () => (panel.hidden ? open() : close()));
+                picker.querySelector(".time-picker-done").addEventListener("click", () => {
+                    commit();
+                    close();
+                    trigger.focus();
+                });
+
+                wheels.forEach((wheel) => {
+                    let timer = null;
+                    let wheelDelta = 0;
+                    let target = null;  // where a smooth scroll is heading
+                    const nudge = (step) => {
+                        touched = true;
+                        const last = wheel.children.length - 1;
+                        target = Math.max(0, Math.min(last, (target ?? indexOf(wheel)) + step));
+                        wheel.scrollTo({ top: target * ROW, behavior: "smooth" });
+                    };
+                    ["pointerdown", "touchstart"].forEach((type) =>
+                        wheel.addEventListener(type, () => { touched = true; }, { passive: true }));
+                    // Mouse wheel: one notch = one number (the browser's own
+                    // step would jump several). Trackpads add up small deltas.
+                    wheel.addEventListener("wheel", (event) => {
+                        event.preventDefault();
+                        wheelDelta += event.deltaMode === 1 ? event.deltaY * ROW : event.deltaY;
+                        if (Math.abs(wheelDelta) < 30) return;
+                        // ~100px is one notch; a bigger single event counts as several.
+                        const step = Math.sign(wheelDelta) * Math.max(1, Math.round(Math.abs(wheelDelta) / 100));
+                        wheelDelta = 0;
+                        nudge(step);
+                    }, { passive: false });
+                    wheel.addEventListener("scroll", () => {
+                        // Hiding the panel resets the wheel to 0 and fires a
+                        // scroll; that must not overwrite the chosen time.
+                        if (panel.hidden) { clearTimeout(timer); target = null; return; }
+                        highlight(wheel);
+                        clearTimeout(timer);
+                        timer = setTimeout(() => { target = null; if (touched && !panel.hidden) commit(); }, 120);
+                    }, { passive: true });
+                    wheel.addEventListener("keydown", (event) => {
+                        const step = { ArrowUp: -1, ArrowDown: 1 }[event.key];
+                        if (step) {
+                            event.preventDefault();
+                            nudge(step);
+                        } else if (event.key === "Enter") {
+                            event.preventDefault();
+                            picker.querySelector(".time-picker-done").click();
+                        }
+                    });
+                });
+
+                picker.addEventListener("keydown", (event) => {
+                    if (event.key === "Escape" && !panel.hidden) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        close();
+                        trigger.focus();
+                    }
+                });
             });
-        });
+
+            // A click anywhere outside the open picker closes it.
+            document.addEventListener("pointerdown", (event) => {
+                if (openPicker && !event.target.closest(".time-picker")) openPicker();
+            });
+        })();
     </script>
 </body>
 </html>

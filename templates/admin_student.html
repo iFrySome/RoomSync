@@ -43,6 +43,16 @@
             <input name="section" id="student-section" value="{{ student.section }}" required>
         </div>
         <div class="field">
+            <label for="student-username">Username</label>
+            <input name="username" id="student-username" value="{{ student.username or '' }}" autocomplete="off">
+        </div>
+        {% if not student.password_hash %}
+        <div class="field">
+            <label for="student-password">Password</label>
+            <input type="password" name="password" id="student-password" autocomplete="new-password">
+        </div>
+        {% endif %}
+        <div class="field">
             <label for="student-phone">Phone <span class="optional">(optional)</span></label>
             <input type="tel" name="phone_number" id="student-phone" value="{{ student.phone_number or '' }}">
         </div>

@@ -39,6 +39,16 @@
             <input name="last_name" id="teacher-last" value="{{ teacher.last_name }}" required>
         </div>
         <div class="field">
+            <label for="teacher-username">Username</label>
+            <input name="username" id="teacher-username" value="{{ teacher.username or '' }}" autocomplete="off">
+        </div>
+        {% if not teacher.password_hash %}
+        <div class="field">
+            <label for="teacher-password">Password</label>
+            <input type="password" name="password" id="teacher-password" autocomplete="new-password">
+        </div>
+        {% endif %}
+        <div class="field">
             <label for="teacher-phone">Phone <span class="optional">(optional)</span></label>
             <input type="tel" name="phone_number" id="teacher-phone" value="{{ teacher.phone_number or '' }}">
         </div>

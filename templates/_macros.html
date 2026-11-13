@@ -13,17 +13,29 @@
 </nav>
 {%- endmacro %}
 
-{# A 24-hour HH:MM time field. Deliberately a text input rather than
+{# A 24-hour HH:MM time picker: a button showing the time that opens two
+   scroll wheels (hours 00–23, minutes 00–59). Deliberately not
    <input type="time">, which many browsers show as 12-hour AM/PM based on
-   the OS locale — see normalize_time_24h() in app.py, which accepts the
-   same loose forms this pattern does ("8:00", "0800") and normalizes them,
-   and the blur handler in base.html that tidies them up as you type. #}
+   the OS locale. The chosen time goes in a hidden input named `name`, so
+   the form posts plain HH:MM, still checked by normalize_time_24h() in
+   app.py. The wheels are built by the time-picker script in base.html. #}
 {% macro time_input(name, value="", id=None, form=None, required=False) -%}
-<input type="text" name="{{ name }}" value="{{ value or '' }}" class="time-24h"
-       {%- if id %} id="{{ id }}"{% endif %}{% if form %} form="{{ form }}"{% endif %}
-       inputmode="numeric" maxlength="5" placeholder="HH:MM" autocomplete="off"
-       pattern="([01]?[0-9]|2[0-3]):?[0-5][0-9]" title="24-hour time (HH:MM), e.g. 08:00 or 13:30"
-       {%- if required %} required{% endif %}>
+<div class="time-picker">
+    <input type="hidden" name="{{ name }}" value="{{ value or '' }}" class="time-picker-value"
+           {%- if form %} form="{{ form }}"{% endif %}>
+    <button type="button" class="time-picker-trigger"{% if id %} id="{{ id }}"{% endif %}
+            aria-haspopup="true" aria-expanded="false">
+        <span class="time-picker-display">{{ value or "--:--" }}</span>
+    </button>
+    <div class="time-picker-panel" hidden>
+        <div class="time-wheels">
+            <div class="time-wheel" data-unit="hour" tabindex="0" role="listbox" aria-label="Hour"></div>
+            <span class="time-wheel-colon" aria-hidden="true">:</span>
+            <div class="time-wheel" data-unit="minute" tabindex="0" role="listbox" aria-label="Minute"></div>
+        </div>
+        <button type="button" class="btn btn-primary btn-sm time-picker-done">Done</button>
+    </div>
+</div>
 {%- endmacro %}
 
 {# From/To date pickers plus one-click preset chips (Today, This Week, ...),

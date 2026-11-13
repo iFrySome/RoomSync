@@ -365,10 +365,19 @@ def _notify_session_ended(conn, class_id, teacher_id, subject_name, today):
     called from _reset_to_welcome() only while the stage being left is
     session_summary/session_summary_edit, so a teacher declining the
     early-tap prompt (also a _reset_to_welcome() caller, but from
-    teacher_early_confirm) never sends this."""
+    teacher_early_confirm) never sends this.
+
+    Also pushes a notice to every enrolled student still marked absent once
+    the summary is final (after any corrections on session_summary_edit) —
+    a panel recommendation. Web Push only, deliberately no SMS."""
+    roster, present, late, _excused, _absent = get_roster_for_date(conn, class_id, today)
+    absent_body = f"You were marked absent for {subject_name} today ({fmt_date(today)})."
+    for student in roster:
+        if student["status"] == "absent":
+            send_push_notification("student", student["student_id"], "Marked Absent", absent_body)
+
     if not teacher_id:
         return
-    roster, present, late, _excused, _absent = get_roster_for_date(conn, class_id, today)
     body = f"Session ended: {present}/{len(roster)} present, {late} late for {subject_name}."
     send_push_notification("teacher", teacher_id, "Session Ended", body)
     # room_state only carries teacher_id/teacher_name, not phone_number, so
@@ -825,16 +834,18 @@ def login():
         active_role = role if role in LOGIN_ROLES else "teacher"
 
         conn = get_db()
+        # Usernames match ignoring capital letters ("Angelica" = "angelica");
+        # _username_problem() keeps them unique on the same terms.
         if role == "admin":
-            user = conn.execute("SELECT * FROM admins WHERE username = ?", (username,)).fetchone()
+            user = conn.execute("SELECT * FROM admins WHERE username = ? COLLATE NOCASE", (username,)).fetchone()
             user_id_key = "admin_id"
             redirect_to = "admin"
         elif role == "student":
-            user = conn.execute("SELECT * FROM students WHERE username = ?", (username,)).fetchone()
+            user = conn.execute("SELECT * FROM students WHERE username = ? COLLATE NOCASE", (username,)).fetchone()
             user_id_key = "student_id"
             redirect_to = "student_dashboard"
         else:
-            user = conn.execute("SELECT * FROM teachers WHERE username = ?", (username,)).fetchone()
+            user = conn.execute("SELECT * FROM teachers WHERE username = ? COLLATE NOCASE", (username,)).fetchone()
             user_id_key = "teacher_id"
             redirect_to = "dashboard"
         conn.close()
@@ -1368,6 +1379,8 @@ def admin_add_teacher():
         flash("Scan the teacher's card first.", "error")
     elif not (first_name and last_name and username and password):
         flash("All teacher fields, including login username/password, are required.", "error")
+    elif (problem := _new_username_problem("teachers", "teacher_id", username)):
+        flash(problem, "error")
     else:
         conn = get_db()
         try:
@@ -1384,6 +1397,42 @@ def admin_add_teacher():
     return redirect(url_for("admin_teachers"))
 
 
+def _username_problem(conn, table, id_column, username, user_id):
+    """Why `username` can't be used for this teacher/student, or None.
+    Usernames are unique per table (a teacher and a student may share one,
+    since the login page picks the role first), ignoring capital letters,
+    the same way login() matches them. Pass user_id=None for a new account."""
+    if any(ch.isspace() for ch in username):
+        return "Username can't contain spaces."
+    taken = conn.execute(
+        f"SELECT 1 FROM {table} WHERE username = ? COLLATE NOCASE AND {id_column} IS NOT ?", (username, user_id)
+    ).fetchone()
+    if taken:
+        return f"Username '{username}' is already taken."
+    return None
+
+
+def _password_needed(conn, table, id_column, user_id, username, new_password):
+    """True when saving would leave this account with a username but no
+    password — a login that can never work. Accounts made before logins
+    existed (e.g. seed_history.py's sample students) have neither."""
+    if new_password:
+        return False
+    current = conn.execute(
+        f"SELECT username, password_hash FROM {table} WHERE {id_column} = ?", (user_id,)
+    ).fetchone()
+    return bool((username or (current and current["username"])) and not (current and current["password_hash"]))
+
+
+def _new_username_problem(table, id_column, username):
+    """_username_problem() for an account being added."""
+    conn = get_db()
+    try:
+        return _username_problem(conn, table, id_column, username, None)
+    finally:
+        conn.close()
+
+
 @app.route("/admin/teachers/<int:teacher_id>/update", methods=["POST"])
 @login_required(role="admin")
 def admin_update_teacher(teacher_id):
@@ -1391,20 +1440,33 @@ def admin_update_teacher(teacher_id):
     first_name = request.form.get("first_name", "").strip()
     last_name = request.form.get("last_name", "").strip()
     phone_number = request.form.get("phone_number", "").strip() or None
+    # Blank keeps the current username, so the form can never remove a login.
+    username = request.form.get("username", "").strip()
+    # Only shown for an account with no password yet (see admin_teacher.html).
+    new_password = request.form.get("password", "")
     teacher_context = request.form.get("teacher_context", type=int)
     if not (rfid_tag and first_name and last_name):
         flash("All teacher fields are required.", "error")
     else:
         conn = get_db()
-        try:
-            conn.execute(
-                "UPDATE teachers SET rfid_tag = ?, first_name = ?, last_name = ?, phone_number = ? WHERE teacher_id = ?",
-                (rfid_tag, first_name, last_name, phone_number, teacher_id),
-            )
-            conn.commit()
-            flash("Teacher updated.", "success")
-        except sqlite3.IntegrityError:
-            flash(f"RFID tag '{rfid_tag}' is already in use.", "error")
+        problem = username and _username_problem(conn, "teachers", "teacher_id", username, teacher_id)
+        if not problem and _password_needed(conn, "teachers", "teacher_id", teacher_id, username, new_password):
+            problem = "Set a password too, so they can log in with that username."
+        if problem:
+            flash(problem, "error")
+        else:
+            try:
+                conn.execute(
+                    "UPDATE teachers SET rfid_tag = ?, first_name = ?, last_name = ?, phone_number = ?, "
+                    "username = COALESCE(?, username), password_hash = COALESCE(?, password_hash) "
+                    "WHERE teacher_id = ?",
+                    (rfid_tag, first_name, last_name, phone_number, username or None,
+                     generate_password_hash(new_password) if new_password else None, teacher_id),
+                )
+                conn.commit()
+                flash("Teacher updated.", "success")
+            except sqlite3.IntegrityError:
+                flash(f"RFID tag '{rfid_tag}' is already in use.", "error")
         conn.close()
     if teacher_context:
         return redirect(url_for("admin_teacher_detail", teacher_id=teacher_context))
@@ -1457,6 +1519,8 @@ def admin_add_student():
         flash("Scan the student's card first.", "error")
     elif not (first_name and last_name and section and username and password):
         flash("All student fields, including login username/password, are required.", "error")
+    elif (problem := _new_username_problem("students", "student_id", username)):
+        flash(problem, "error")
     else:
         conn = get_db()
         try:
@@ -1499,21 +1563,33 @@ def admin_update_student(student_id):
     last_name = request.form.get("last_name", "").strip()
     section = request.form.get("section", "").strip()
     phone_number = request.form.get("phone_number", "").strip() or None
+    # Blank keeps the current username, so the form can never remove a login.
+    username = request.form.get("username", "").strip()
+    # Only shown for an account with no password yet (see admin_student.html).
+    new_password = request.form.get("password", "")
     student_context = request.form.get("student_context", type=int)
     if not (rfid_tag and first_name and last_name and section):
         flash("All student fields are required.", "error")
     else:
         conn = get_db()
-        try:
-            conn.execute(
-                "UPDATE students SET rfid_tag = ?, first_name = ?, last_name = ?, section = ?, phone_number = ? "
-                "WHERE student_id = ?",
-                (rfid_tag, first_name, last_name, section, phone_number, student_id),
-            )
-            conn.commit()
-            flash("Student updated.", "success")
-        except sqlite3.IntegrityError:
-            flash(f"RFID tag '{rfid_tag}' is already in use.", "error")
+        problem = username and _username_problem(conn, "students", "student_id", username, student_id)
+        if not problem and _password_needed(conn, "students", "student_id", student_id, username, new_password):
+            problem = "Set a password too, so they can log in with that username."
+        if problem:
+            flash(problem, "error")
+        else:
+            try:
+                conn.execute(
+                    "UPDATE students SET rfid_tag = ?, first_name = ?, last_name = ?, section = ?, phone_number = ?, "
+                    "username = COALESCE(?, username), password_hash = COALESCE(?, password_hash) "
+                    "WHERE student_id = ?",
+                    (rfid_tag, first_name, last_name, section, phone_number, username or None,
+                     generate_password_hash(new_password) if new_password else None, student_id),
+                )
+                conn.commit()
+                flash("Student updated.", "success")
+            except sqlite3.IntegrityError:
+                flash(f"RFID tag '{rfid_tag}' is already in use.", "error")
         conn.close()
     if student_context:
         return redirect(url_for("admin_student_detail", student_id=student_context))
@@ -2616,6 +2692,119 @@ def student_dashboard():
         history_counts=history_counts,
         vapid_public_key=VAPID_PUBLIC_KEY,
     )
+
+
+# ---------------------------------------------------------------------------
+# Student Attendance Report — a panel recommendation: a user-defined report
+# of one student's present / late / excused / absent days. The person
+# running it picks the student, one class or all of them, any date range
+# (same filter as Attendance Records) and which statuses to list. Admins
+# can report on any student; a teacher only on students enrolled in their
+# own classes, and only for those classes.
+# ---------------------------------------------------------------------------
+
+def _student_report(conn, endpoint, students, classes_for):
+    """Builds and renders the report page. `students` is who may be picked;
+    classes_for(student_id) returns the classes (class_id, subject_name,
+    start_time, end_time) of that student the viewer may see."""
+    student_ids = {s["student_id"] for s in students}
+    student_id = request.args.get("student_id", type=int)
+    if student_id not in student_ids:
+        student_id = None
+    student = next((s for s in students if s["student_id"] == student_id), None)
+
+    classes = classes_for(student_id) if student else []
+    class_id = request.args.get("class_id", type=int)
+    if class_id not in {c["class_id"] for c in classes}:
+        class_id = None
+
+    # Which statuses to list; none ticked means all of them.
+    statuses = [s for s in request.args.getlist("status") if s in ATTENDANCE_STATUSES]
+    if not statuses:
+        statuses = list(ATTENDANCE_STATUSES)
+
+    url_params = {"student_id": student_id, "class_id": class_id}
+    if len(statuses) < len(ATTENDANCE_STATUSES):
+        url_params["status"] = statuses
+    date_range = resolve_date_range(request.args, endpoint, **url_params)
+
+    records, counts = [], _empty_status_counts()
+    if student:
+        report_classes = [c for c in classes if class_id in (None, c["class_id"])]
+        records, counts = get_student_attendance_records(conn, student_id, report_classes, date_range)
+        records = [r for r in records if r["status"] in statuses]
+
+    return render_template(
+        "student_report.html",
+        endpoint=endpoint,
+        students=students,
+        student=student,
+        classes=classes,
+        class_id=class_id,
+        statuses=statuses,
+        all_statuses=ATTENDANCE_STATUSES,
+        date_range=date_range,
+        records=records,
+        counts=counts,
+        generated_at=datetime.now().strftime("%Y-%m-%d %H:%M"),
+    )
+
+
+@app.route("/admin/reports")
+@login_required(role="admin")
+def admin_student_report():
+    conn = get_db()
+    students = conn.execute(
+        "SELECT student_id, first_name, last_name, section FROM students ORDER BY last_name, first_name"
+    ).fetchall()
+
+    def classes_for(student_id):
+        return conn.execute(
+            """
+            SELECT c.class_id, c.subject_name, c.start_time, c.end_time
+            FROM enrollments e JOIN classes c ON c.class_id = e.class_id
+            WHERE e.student_id = ?
+            ORDER BY c.subject_name
+            """,
+            (student_id,),
+        ).fetchall()
+
+    page = _student_report(conn, "admin_student_report", students, classes_for)
+    conn.close()
+    return page
+
+
+@app.route("/dashboard/reports")
+@login_required(role="teacher")
+def dashboard_student_report():
+    conn = get_db()
+    teacher_id = session["user_id"]
+    students = conn.execute(
+        """
+        SELECT DISTINCT st.student_id, st.first_name, st.last_name, st.section
+        FROM enrollments e
+        JOIN classes c ON c.class_id = e.class_id
+        JOIN students st ON st.student_id = e.student_id
+        WHERE c.teacher_id = ?
+        ORDER BY st.last_name, st.first_name
+        """,
+        (teacher_id,),
+    ).fetchall()
+
+    def classes_for(student_id):
+        return conn.execute(
+            """
+            SELECT c.class_id, c.subject_name, c.start_time, c.end_time
+            FROM enrollments e JOIN classes c ON c.class_id = e.class_id
+            WHERE e.student_id = ? AND c.teacher_id = ?
+            ORDER BY c.subject_name
+            """,
+            (student_id, teacher_id),
+        ).fetchall()
+
+    page = _student_report(conn, "dashboard_student_report", students, classes_for)
+    conn.close()
+    return page
 
 
 @app.route("/summary")

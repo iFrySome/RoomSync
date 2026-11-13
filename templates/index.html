@@ -137,7 +137,7 @@
                 root.innerHTML = `
                     <div class="stage-ongoing">
                         <h1>Class is Ongoing</h1>
-                        <p class="class-name">${escapeHtml(state.subject_name)} until ${escapeHtml(state.end_time)}</p>
+                        <p class="class-name">${escapeHtml(state.subject_name)} &middot; Sir/Ma'am ${escapeHtml(state.teacher_name)} &middot; until ${escapeHtml(state.end_time)}</p>
                         <p class="hint">${note}</p>
                         <div class="roster-boxes">${rosterBoxes(state)}</div>
                         <p class="roster-count">

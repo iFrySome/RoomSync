@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% from "_macros.html" import breadcrumbs, date_range_filter, stat_row %}
+{% block title %}RoomSync - Student Report{% endblock %}
+
+{% block content %}
+{% if endpoint == 'admin_student_report' %}
+{{ breadcrumbs([("Admin", url_for('admin')), ("Reports", None)]) }}
+{% else %}
+{{ breadcrumbs([("My Dashboard", url_for('dashboard')), ("Reports", None)]) }}
+{% endif %}
+<div class="page-header">
+    <div>
+        <h1>Student Report</h1>
+        {% if student %}
+        <p class="meta">{{ student.first_name }} {{ student.last_name }} &middot; {{ student.section }} &middot; {{ date_range.label }}</p>
+        {% endif %}
+    </div>
+    {% if student %}
+    <div class="page-actions no-print">
+        <button type="button" class="btn btn-secondary" onclick="window.print()">Print</button>
+    </div>
+    {% endif %}
+</div>
+
+<section class="admin-section no-print">
+    {% call date_range_filter(date_range, url_for(endpoint)) %}
+    <div class="field">
+        <label for="report-student">Student</label>
+        <select name="student_id" id="report-student" onchange="this.form.submit()">
+            <option value="" {% if not student %}selected{% endif %} disabled>Choose a student</option>
+            {% for s in students %}
+            <option value="{{ s.student_id }}" {% if student and s.student_id == student.student_id %}selected{% endif %}>
+                {{ s.last_name }}, {{ s.first_name }} ({{ s.section }})
+            </option>
+            {% endfor %}
+        </select>
+    </div>
+    {% if student %}
+    <div class="field">
+        <label for="report-class">Class</label>
+        <select name="class_id" id="report-class" onchange="this.form.submit()">
+            <option value="" {% if not class_id %}selected{% endif %}>All classes</option>
+            {% for c in classes %}
+            <option value="{{ c.class_id }}" {% if c.class_id == class_id %}selected{% endif %}>
+                {{ c.subject_name }} ({{ c.start_time|time_range(c.end_time) }})
+            </option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="field field-full">
+        <span class="field-label">Show</span>
+        <div class="status-checks">
+            {% for s in all_statuses %}
+            <label class="status-check status-check-{{ s }}">
+                <input type="checkbox" name="status" value="{{ s }}" {% if s in statuses %}checked{% endif %}
+                       onchange="this.form.submit()">
+                {{ s|title }}
+            </label>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+    {% endcall %}
+</section>
+
+{% if not students %}
+<p class="empty-state">No students yet.</p>
+{% elif student %}
+<section class="admin-section">
+    <p class="print-only report-print-head">
+        <strong>{{ student.first_name }} {{ student.last_name }}</strong> &middot; {{ student.section }}<br>
+        {{ (classes|selectattr('class_id', 'equalto', class_id)|map(attribute='subject_name')|first) if class_id else "All classes" }}
+        &middot; {{ date_range.label }} &middot; Generated {{ generated_at }}
+    </p>
+    {{ stat_row(counts) }}
+    <div class="table-wrap">
+    <table class="roster-table">
+        <thead>
+            <tr><th>Date</th><th>Class</th><th>Status</th><th>Time Tapped</th></tr>
+        </thead>
+        <tbody>
+            {% for r in records %}
+            <tr>
+                <td>{{ r.date|fmt_date }}</td>
+                <td class="cell-strong">{{ r.subject_name }}</td>
+                <td><span class="pill pill-{{ r.status }}">{{ r.status|upper }}</span></td>
+                <td>{{ r.time_tapped or "—" }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="4" class="cell-empty">No matching days in {{ date_range.label }}.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</section>
+{% endif %}
+{% endblock %}
