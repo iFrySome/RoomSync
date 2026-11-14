@@ -1081,6 +1081,16 @@ new IP: edit the two lines in `config.py`, then restart `python app.py`
 genuinely one-time values that don't need this same churn, so they stay
 inline in `app.py` — see "Known simplifications".)
 
+**`SMS_GATEWAY_IP = "auto"`** (the user's setup for presenting: the Pi
+connects to the gateway phone's own hotspot, so the phone *is* the
+router). `sms_gateway_ip()` in `app.py` then returns the machine's
+default gateway, read fresh on every send by `_default_gateway_ip()`.
+On the Pi that comes from `/proc/net/route`; on a Windows dev laptop it
+comes from `route print`. That way it survives Android picking a new
+hotspot address each time the hotspot starts. If no default route
+exists (e.g. hotspot off), the send is skipped with a log line, never an
+error. A plain IP in `SMS_GATEWAY_IP` works exactly as before.
+
 **`students.phone_number`/`teachers.phone_number`** — see "Database
 schema" above. Nullable, admin-set, optional — the SMS equivalent of a
 push subscription; no number set means that person just never gets an

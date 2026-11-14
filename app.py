@@ -63,8 +63,12 @@ state and auto-expire, without changing the underlying stage.
 
 import json
 import math
+import os
 import re
+import socket
 import sqlite3
+import struct
+import subprocess
 import threading
 import urllib.parse
 from datetime import datetime, timedelta, date
@@ -182,6 +186,40 @@ def send_push_notification(user_type, user_id, title, body):
 # the same WiFi network (see SMS_GATEWAY_IP/PORT above).
 # ---------------------------------------------------------------------------
 
+def _default_gateway_ip():
+    """This machine's router (default gateway) address, or None. When the
+    SMS gateway phone is also the WiFi hotspot the Pi is connected to, the
+    phone *is* the router — and Android often picks a new hotspot address
+    every time the hotspot starts, so it's looked up fresh on every send
+    rather than once at startup."""
+    try:
+        if os.name == "posix":
+            # Linux (the Pi): the default route is the row with destination
+            # 00000000; its gateway is little-endian hex.
+            with open("/proc/net/route") as f:
+                for line in f.readlines()[1:]:
+                    fields = line.split()
+                    if len(fields) > 2 and fields[1] == "00000000" and fields[2] != "00000000":
+                        return socket.inet_ntoa(struct.pack("<L", int(fields[2], 16)))
+        else:
+            # Windows (laptop dev): the 0.0.0.0 row of `route print`.
+            out = subprocess.run(["route", "print", "-4", "0.0.0.0"], capture_output=True, text=True, timeout=5).stdout
+            match = re.search(r"^\s*0\.0\.0\.0\s+0\.0\.0\.0\s+(\d+\.\d+\.\d+\.\d+)", out, re.M)
+            if match:
+                return match.group(1)
+    except Exception as exc:  # never let a lookup failure break a request
+        print(f"[send_sms_notification] couldn't read the default gateway: {type(exc).__name__}: {exc}")
+    return None
+
+
+def sms_gateway_ip():
+    """SMS_GATEWAY_IP from config.py, or — when it's "auto" — the router
+    address, for running off the gateway phone's own hotspot."""
+    if str(SMS_GATEWAY_IP).strip().lower() == "auto":
+        return _default_gateway_ip()
+    return SMS_GATEWAY_IP
+
+
 def send_sms_notification(phone_number, message):
     """Sends message as a real SMS via the spare phone's SIM, by hitting
     its REST SMS Gateway app's local HTTP endpoint. No-ops immediately if
@@ -199,7 +237,11 @@ def send_sms_notification(phone_number, message):
         return
 
     encoded_message = urllib.parse.quote(message)
-    url = f"http://{SMS_GATEWAY_IP}:{SMS_GATEWAY_PORT}/v1/sms/send/?phone={phone_number}&message={encoded_message}"
+    gateway_ip = sms_gateway_ip()
+    if not gateway_ip:
+        print("[send_sms_notification] skipped: SMS_GATEWAY_IP is \"auto\" but no default gateway was found")
+        return
+    url = f"http://{gateway_ip}:{SMS_GATEWAY_PORT}/v1/sms/send/?phone={phone_number}&message={encoded_message}"
 
     try:
         response = requests.get(url, timeout=10)

@@ -13,7 +13,10 @@ phone's screen, and restart `python app.py` after editing. Only matters
 on whichever machine is actually running app.py. The machine running
 app.py and that phone must be on the same WiFi network (or the phone's
 own hotspot) for this to work at all — see CLAUDE.md's "SMS
-Notifications" section.
+Notifications" section. When the machine running app.py is connected to
+the gateway phone's *own hotspot*, set SMS_GATEWAY_IP = "auto": the phone
+is then the router, and its address is looked up on every send, so it
+keeps working even when Android picks a new hotspot address.
 
 ROOMSYNC_SERVER_URL: where rfid_listener.py POSTs each tap. Leave this as
 the 127.0.0.1 default when app.py runs on the same machine as the RC522
@@ -30,7 +33,7 @@ FLASK_SECRET_KEY / VAPID_PRIVATE_KEY / VAPID_PUBLIC_KEY: real secrets
 below — only the machine actually running app.py needs real values here.
 """
 
-SMS_GATEWAY_IP = "0.0.0.0"
+SMS_GATEWAY_IP = "auto"  # or the phone's IP, e.g. "192.168.68.200"
 SMS_GATEWAY_PORT = "8080"
 
 ROOMSYNC_SERVER_URL = "http://127.0.0.1:5000"
