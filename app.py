@@ -737,6 +737,7 @@ def handle_student_tap(conn, student, now):
         stage = room_state["stage"]
         class_id = room_state["class_id"]
         end_time = room_state["end_time"]
+        subject_name = room_state["subject_name"]
 
     if stage == "welcome":
         set_flash("Only teachers can tap at this time.", "error", seconds=4)
@@ -784,7 +785,30 @@ def handle_student_tap(conn, student, now):
     # gets the positive beep), but the shared display shows it in amber
     # so it reads differently from an on-time one at a glance.
     set_flash(message, "success" if status == "present" else "warning", seconds=3)
+    if status == "late":
+        _notify_late_in_background(
+            student["student_id"], student["phone_number"], subject_name, now.strftime("%H:%M")
+        )
     return message, "success"
+
+
+def _notify_late_in_background(student_id, phone_number, subject_name, time_str):
+    """Tells a student they were marked late, by push and SMS. Sent on a
+    background thread: an SMS can take seconds, and the tap itself must
+    answer at once (rfid_listener.py only waits 5 s for /kiosk). The test
+    request context is only there so url_for() in send_push_notification()
+    works outside a real request."""
+    body = f"You were marked LATE for {subject_name} at {time_str}."
+
+    def send():
+        try:
+            with app.test_request_context():
+                send_push_notification("student", student_id, "Marked Late", body)
+                send_sms_notification(phone_number, body)
+        except Exception as exc:  # a notification must never take anything down
+            print(f"[late notice] failed for student_id={student_id}: {type(exc).__name__}: {exc}")
+
+    threading.Thread(target=send, daemon=True).start()
 
 
 def get_display_state(conn, now=None):
