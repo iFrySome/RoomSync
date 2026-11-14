@@ -1173,10 +1173,21 @@ query — see point 3 above).
   at all means being physically at the reader or on the same machine;
   would need real access control before any real deployment.
 - RC522 reader integration (via SPI on the Raspberry Pi 4) is done — see
-  "RFID hardware listener" above. Running the 7-inch touchscreen itself in
-  kiosk mode (auto-launching the `/` display full-screen on Pi boot,
-  hiding the OS chrome) is not implemented yet — that's the remaining
-  hardware milestone.
+  "RFID hardware listener" above. **Boot-to-kiosk** is set up by running
+  `bash pi/setup_autostart.sh` once on the Pi (`--remove` undoes it). It
+  installs systemd services `roomsync` (`app.py`) and `roomsync-rfid`
+  (`rfid_listener.py`, with `gpio`/`spi` groups), both `Restart=always`.
+  It also adds an XDG autostart entry
+  (`~/.config/autostart/roomsync-kiosk.desktop`) running `pi/kiosk.sh`,
+  which waits for the app and opens Chromium with `--kiosk
+  --password-store=basic` (the keyring prompt once left Chromium in a
+  reload loop on this Pi). Finally it turns on desktop auto-login and
+  turns off screen blanking via `raspi-config nonint`. Once installed,
+  restart with `sudo systemctl restart roomsync roomsync-rfid` after a
+  `git pull` or a `config.py` change, and read logs with `journalctl -u
+  roomsync -f`. Running `python3 app.py` by hand at the same time clashes
+  on port 5000. ngrok is not autostarted. `.gitattributes` forces LF for
+  `*.sh`.
 - The display state machine (`room_state` in `app.py`) is a single
   in-memory dict guarded by a lock — it assumes one room/one process, and
   resets to `welcome` if the Flask process restarts. Fine for the current
