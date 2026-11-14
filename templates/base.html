@@ -39,10 +39,10 @@
         ] -%}
     {%- else -%}
         {%- set home_url = url_for('index') -%}
+        {#- Logged out: just the door display. The kiosk and summary pages
+            still work by URL (/kiosk is how laptop dev simulates taps). -#}
         {%- set nav_items = [
             ('index', 'Display', ['index']),
-            ('kiosk', 'RFID Kiosk', ['kiosk']),
-            ('summary', "Today's Summary", ['summary']),
         ] -%}
     {%- endif %}
     <nav class="navbar">

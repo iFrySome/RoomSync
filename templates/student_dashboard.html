@@ -33,6 +33,20 @@
     {% endif %}
 </section>
 
+<section class="admin-section" id="phone">
+    <h2>My Phone Number</h2>
+    <form method="POST" action="{{ url_for('student_update_phone') }}" class="form-grid">
+        <div class="field field-fixed">
+            <label for="my-phone">Mobile Number</label>
+            <input type="tel" name="phone_number" id="my-phone" value="{{ student.phone_number or '' }}"
+                   inputmode="tel" autocomplete="tel" maxlength="16">
+        </div>
+        <div class="field field-action">
+            <button type="submit" class="btn btn-save">Save</button>
+        </div>
+    </form>
+</section>
+
 {% if enrollments %}
 <section class="admin-section" id="attendance">
     <h2>My Attendance</h2>

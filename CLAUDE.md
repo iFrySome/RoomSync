@@ -469,7 +469,9 @@ see "Known simplifications").
   different link set per role: admin gets Home/Teachers/Students/Classes/
   Rooms/Reports/Today's Summary/Display/RFID Kiosk; a teacher gets My Dashboard/
   Attendance Records/Reports/Display; a student gets My Dashboard; logged out gets
-  Display/RFID Kiosk/Today's Summary. The current section is highlighted.
+  only Display (the user asked to drop RFID Kiosk/Today's Summary there;
+  `/kiosk` and `/summary` still open by URL, and `/kiosk` is still how
+  laptop dev simulates taps). The current section is highlighted.
   On the right it shows who's logged in — `session["display_name"]`, set
   by `login()` (the teacher's/student's full name, or the admin's
   username) — plus Logout (or Login).
@@ -567,6 +569,13 @@ enrollments and attendance, never anyone else's.
   informational, no status badges or counts like the teacher's "Today's
   Sessions" — there's no live/completed distinction meaningful to a single
   student's own membership in a class.
+- **My Phone Number**: the one thing a student can edit themselves, their
+  SMS number (`student_update_phone()`, `POST
+  /student-dashboard/phone`). It always updates the session's own row,
+  never an id from the form. Spaces and dashes are stripped, then the
+  number must match `PHONE_PATTERN` (PH mobile `09xxxxxxxxx` or
+  `+639xxxxxxxxx`). Blank clears it, which means no SMS. Admins can still
+  set it from the student's Edit page.
 - **My Attendance**: a class dropdown ("All my classes" or one enrolled
   class) plus the same date-range filter as the teacher's Attendance
   Records (default This Month). Shows totals and every session of those

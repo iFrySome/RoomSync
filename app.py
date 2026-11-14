@@ -2787,6 +2787,27 @@ def student_dashboard():
     )
 
 
+PHONE_PATTERN = re.compile(r"^(\+63|0)9\d{9}$")  # PH mobile: 09xxxxxxxxx or +639xxxxxxxxx
+
+
+@app.route("/student-dashboard/phone", methods=["POST"])
+@login_required(role="student")
+def student_update_phone():
+    """A student changes their own SMS number (the only field a student can
+    edit). Always the logged-in student's own row — the id comes from the
+    session, never the form. Blank clears it (no SMS)."""
+    phone = re.sub(r"[\s-]", "", request.form.get("phone_number", ""))
+    if phone and not PHONE_PATTERN.match(phone):
+        flash("Enter a mobile number like 09171234567.", "error")
+    else:
+        conn = get_db()
+        conn.execute("UPDATE students SET phone_number = ? WHERE student_id = ?", (phone or None, session["user_id"]))
+        conn.commit()
+        conn.close()
+        flash("Phone number saved." if phone else "Phone number removed.", "success")
+    return redirect(url_for("student_dashboard"))
+
+
 # ---------------------------------------------------------------------------
 # Student Attendance Report — a panel recommendation: a user-defined report
 # of one student's present / late / excused / absent days. The person
