@@ -1044,18 +1044,25 @@ wiring SMS in added no extra queries anywhere:
    `phone_number` — so this is the one trigger where fetching it costs one
    small extra query (`SELECT phone_number FROM teachers WHERE
    teacher_id = ?`, by primary key), rather than an existing query just
-   growing an extra joined column. The same finalization also pushes
+   growing an extra joined column. The same finalization also sends
    *"You were marked absent for [Subject] today ([date])."* to every
    enrolled student still `absent` on the final roster (after any
-   `session_summary_edit` corrections) — a panel recommendation. This
-   one is **Web Push only, no SMS**, by the user's choice.
+   `session_summary_edit` corrections) — a panel recommendation — by
+   **push and SMS**. (It was push-only at first; the user later asked
+   for SMS too.) It fires for a normal end, an early end confirmed
+   "Yes", Edit → Confirm, and the 1-minute auto-confirm alike. All of
+   trigger 3's notices, the teacher's and the students', go through
+   `_send_notices_in_background()`, since `_reset_to_welcome()` holds
+   `room_state_lock`. It sends pushes first, then SMS
+   `NOTICE_SMS_GAP_SECONDS` (1 s) apart, which suits the single gateway
+   SIM.
 4. **A student taps in late** (`handle_student_tap()` recording status
    `late` during `class_ongoing`) — notifies that student by **push and
    SMS**: *"You were marked LATE for [Subject] at HH:MM."*
-   (`_notify_late_in_background()`). Unlike the others it runs on a
-   background thread, so a slow SMS gateway never delays the tap
-   (`rfid_listener.py` only waits 5 s for `/kiosk`). It runs inside
-   `app.test_request_context()` so `url_for()` in
+   (`_notify_late_in_background()`, through the same
+   `_send_notices_in_background()` thread), so a slow SMS gateway never
+   delays the tap (`rfid_listener.py` only waits 5 s for `/kiosk`). The
+   thread runs inside `app.test_request_context()` so `url_for()` in
    `send_push_notification()` works outside a request. On-time taps and
    duplicate taps send nothing.
 

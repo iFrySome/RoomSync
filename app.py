@@ -70,6 +70,7 @@ import sqlite3
 import struct
 import subprocess
 import threading
+import time
 import urllib.parse
 from datetime import datetime, timedelta, date
 from functools import wraps
@@ -409,26 +410,60 @@ def _notify_session_ended(conn, class_id, teacher_id, subject_name, today):
     early-tap prompt (also a _reset_to_welcome() caller, but from
     teacher_early_confirm) never sends this.
 
-    Also pushes a notice to every enrolled student still marked absent once
-    the summary is final (after any corrections on session_summary_edit) —
-    a panel recommendation. Web Push only, deliberately no SMS."""
+    Also notifies every enrolled student still marked absent once the
+    summary is final (after any corrections on session_summary_edit) — a
+    panel recommendation — by push and SMS, for a normal end and an early
+    end alike. Everything here is sent by _send_notices_in_background(),
+    since this runs while room_state_lock is held."""
     roster, present, late, _excused, _absent = get_roster_for_date(conn, class_id, today)
-    absent_body = f"You were marked absent for {subject_name} today ({fmt_date(today)})."
-    for student in roster:
-        if student["status"] == "absent":
-            send_push_notification("student", student["student_id"], "Marked Absent", absent_body)
+    notices = []
+    if teacher_id:
+        # room_state only carries teacher_id/teacher_name, not phone_number,
+        # so this is one small extra lookup by primary key.
+        teacher = conn.execute("SELECT phone_number FROM teachers WHERE teacher_id = ?", (teacher_id,)).fetchone()
+        notices.append(("teacher", teacher_id, teacher["phone_number"] if teacher else None, "Session Ended",
+                        f"Session ended: {present}/{len(roster)} present, {late} late for {subject_name}."))
 
-    if not teacher_id:
+    absent_ids = [s["student_id"] for s in roster if s["status"] == "absent"]
+    if absent_ids:
+        phones = dict(conn.execute(
+            f"SELECT student_id, phone_number FROM students WHERE student_id IN ({','.join('?' * len(absent_ids))})",
+            absent_ids,
+        ).fetchall())
+        absent_body = f"You were marked absent for {subject_name} today ({fmt_date(today)})."
+        notices += [("student", sid, phones.get(sid), "Marked Absent", absent_body) for sid in absent_ids]
+
+    _send_notices_in_background(notices)
+
+
+NOTICE_SMS_GAP_SECONDS = 1  # the gateway phone's single SIM sends one at a time
+
+
+def _send_notices_in_background(notices):
+    """Sends (user_type, user_id, phone_number, title, body) notices by push
+    and SMS on a background thread, so the caller — the display, a tap,
+    whoever holds room_state_lock — never waits on the network. Pushes go
+    first (fast); SMS follow a moment apart, which the single gateway SIM
+    handles more reliably than a burst."""
+    if not notices:
         return
-    body = f"Session ended: {present}/{len(roster)} present, {late} late for {subject_name}."
-    send_push_notification("teacher", teacher_id, "Session Ended", body)
-    # room_state only carries teacher_id/teacher_name, not phone_number, so
-    # unlike the other two triggers (which already join phone_number into
-    # a query they're making anyway), this is one small extra lookup by
-    # primary key — negligible next to threading a notification-only field
-    # through the whole room_state dict.
-    teacher = conn.execute("SELECT phone_number FROM teachers WHERE teacher_id = ?", (teacher_id,)).fetchone()
-    send_sms_notification(teacher["phone_number"] if teacher else None, body)
+
+    def send():
+        try:
+            with app.test_request_context():  # url_for() in send_push_notification()
+                for user_type, user_id, _phone, title, body in notices:
+                    send_push_notification(user_type, user_id, title, body)
+                texted = 0
+                for _type, _id, phone, _title, body in notices:
+                    if phone:
+                        if texted:
+                            time.sleep(NOTICE_SMS_GAP_SECONDS)
+                        send_sms_notification(phone, body)
+                        texted += 1
+        except Exception as exc:  # a notification must never take anything down
+            print(f"[notices] failed: {type(exc).__name__}: {exc}")
+
+    threading.Thread(target=send, daemon=True).start()
 
 
 def _reset_to_welcome(conn, now=None):
@@ -793,22 +828,14 @@ def handle_student_tap(conn, student, now):
 
 
 def _notify_late_in_background(student_id, phone_number, subject_name, time_str):
-    """Tells a student they were marked late, by push and SMS. Sent on a
-    background thread: an SMS can take seconds, and the tap itself must
-    answer at once (rfid_listener.py only waits 5 s for /kiosk). The test
-    request context is only there so url_for() in send_push_notification()
-    works outside a real request."""
-    body = f"You were marked LATE for {subject_name} at {time_str}."
-
-    def send():
-        try:
-            with app.test_request_context():
-                send_push_notification("student", student_id, "Marked Late", body)
-                send_sms_notification(phone_number, body)
-        except Exception as exc:  # a notification must never take anything down
-            print(f"[late notice] failed for student_id={student_id}: {type(exc).__name__}: {exc}")
-
-    threading.Thread(target=send, daemon=True).start()
+    """Tells a student they were marked late, by push and SMS, in the
+    background (see _send_notices_in_background()): an SMS can take
+    seconds, and the tap itself must answer at once (rfid_listener.py only
+    waits 5 s for /kiosk)."""
+    _send_notices_in_background([
+        ("student", student_id, phone_number, "Marked Late",
+         f"You were marked LATE for {subject_name} at {time_str}."),
+    ])
 
 
 def get_display_state(conn, now=None):
