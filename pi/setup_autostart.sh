@@ -4,9 +4,11 @@
 #   bash pi/setup_autostart.sh            # turn autostart on
 #   bash pi/setup_autostart.sh --remove   # turn it off again
 #
-# Installs two systemd services and one desktop autostart entry:
+# Installs systemd services and one desktop autostart entry:
 #   roomsync.service       -> python3 app.py        (restarts if it crashes)
 #   roomsync-rfid.service  -> python3 rfid_listener.py
+#   roomsync-ngrok.service -> ngrok http 5000 (only if ngrok is installed and
+#                             logged in; the public HTTPS link push needs)
 #   ~/.config/autostart/roomsync-kiosk.desktop -> pi/kiosk.sh (Chromium full-screen)
 # and switches on desktop auto-login and turns off screen blanking.
 #
@@ -24,8 +26,9 @@ if [ "$(id -u)" -eq 0 ]; then
 fi
 
 if [ "$1" = "--remove" ]; then
-    sudo systemctl disable --now roomsync-rfid.service roomsync.service 2>/dev/null || true
-    sudo rm -f /etc/systemd/system/roomsync.service /etc/systemd/system/roomsync-rfid.service
+    sudo systemctl disable --now roomsync-ngrok.service roomsync-rfid.service roomsync.service 2>/dev/null || true
+    sudo rm -f /etc/systemd/system/roomsync.service /etc/systemd/system/roomsync-rfid.service \
+               /etc/systemd/system/roomsync-ngrok.service
     sudo systemctl daemon-reload
     rm -f "$AUTOSTART"
     echo "RoomSync autostart removed. Start it by hand again with: python3 app.py"
@@ -95,6 +98,35 @@ EOF
 sudo systemctl daemon-reload
 sudo systemctl enable --now roomsync.service roomsync-rfid.service
 
+# ngrok: the public HTTPS link (needed for phone push notifications). Only
+# set up when ngrok is installed and logged in for this user.
+NGROK="$(command -v ngrok || true)"
+SERVICES="roomsync.service roomsync-rfid.service"
+if [ -n "$NGROK" ] && "$NGROK" config check >/dev/null 2>&1; then
+    pkill -x ngrok 2>/dev/null || true   # a copy started by hand would hold the link
+    sudo tee /etc/systemd/system/roomsync-ngrok.service >/dev/null <<EOF
+[Unit]
+Description=RoomSync public link (ngrok)
+After=network-online.target roomsync.service
+Wants=network-online.target
+
+[Service]
+User=$USER_NAME
+Environment=HOME=$HOME
+ExecStart=$NGROK http 5000 --log=stdout
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now roomsync-ngrok.service
+    SERVICES="$SERVICES roomsync-ngrok.service"
+else
+    echo "ngrok not installed or not logged in — skipping the public link."
+fi
+
 # Full-screen display at desktop login
 chmod +x "$APP_DIR/pi/kiosk.sh"
 mkdir -p "$(dirname "$AUTOSTART")"
@@ -112,12 +144,19 @@ if command -v raspi-config >/dev/null; then
     sudo raspi-config nonint do_blanking 1 || true
 fi
 
-sleep 2
+sleep 4
 echo
-systemctl --no-pager --lines=0 status roomsync.service roomsync-rfid.service | grep -E "●|Active:" || true
+systemctl --no-pager --lines=0 status $SERVICES | grep -E "●|Active:" || true
+echo
+if [[ "$SERVICES" == *ngrok* ]]; then
+    LINK="$(curl -s http://127.0.0.1:4040/api/tunnels | grep -o '"public_url":"https[^"]*' | cut -d'"' -f4 | head -1)"
+    echo "Public link: ${LINK:-not up yet — check with: bash pi/link.sh}"
+fi
 echo
 echo "Done. Reboot to try it:  sudo reboot"
-echo "Logs:   journalctl -u roomsync -f      (app)"
-echo "        journalctl -u roomsync-rfid -f (card reader)"
+echo "Logs:   journalctl -u roomsync -f        (app)"
+echo "        journalctl -u roomsync-rfid -f   (card reader)"
+echo "        journalctl -u roomsync-ngrok -f  (public link)"
+echo "Show the public link any time:  bash pi/link.sh"
 echo "Restart after a git pull or config.py change:  sudo systemctl restart roomsync roomsync-rfid"
 echo "Leave the full-screen display: Alt+F4"

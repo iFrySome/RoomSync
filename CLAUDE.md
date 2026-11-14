@@ -1186,8 +1186,12 @@ query — see point 3 above).
   restart with `sudo systemctl restart roomsync roomsync-rfid` after a
   `git pull` or a `config.py` change, and read logs with `journalctl -u
   roomsync -f`. Running `python3 app.py` by hand at the same time clashes
-  on port 5000. ngrok is not autostarted. `.gitattributes` forces LF for
-  `*.sh`.
+  on port 5000. If `ngrok` is installed and `ngrok config check` passes,
+  it also installs `roomsync-ngrok` (`ngrok http 5000`, `Restart=always`)
+  for the public HTTPS link that push needs. `bash pi/link.sh` prints
+  that link from ngrok's local API. The account's free fixed domain can
+  be online from only one machine at a time, so stop the laptop's ngrok
+  while the Pi's runs. `.gitattributes` forces LF for `*.sh`.
 - The display state machine (`room_state` in `app.py`) is a single
   in-memory dict guarded by a lock — it assumes one room/one process, and
   resets to `welcome` if the Flask process restarts. Fine for the current
