@@ -28,7 +28,7 @@ fi
 if [ "$1" = "--remove" ]; then
     sudo systemctl disable --now roomsync-ngrok.service roomsync-rfid.service roomsync.service 2>/dev/null || true
     sudo rm -f /etc/systemd/system/roomsync.service /etc/systemd/system/roomsync-rfid.service \
-               /etc/systemd/system/roomsync-ngrok.service
+               /etc/systemd/system/roomsync-ngrok.service /etc/sudoers.d/roomsync-power
     sudo systemctl daemon-reload
     rm -f "$AUTOSTART"
     echo "RoomSync autostart removed. Start it by hand again with: python3 app.py"
@@ -98,6 +98,19 @@ EOF
 sudo systemctl daemon-reload
 sudo systemctl enable --now roomsync.service roomsync-rfid.service
 
+# Let the app power the Pi off / restart it (the touchscreen power button
+# and the Admin page) without a password — those two commands only.
+SUDOERS_TMP="$(mktemp)"
+cat > "$SUDOERS_TMP" <<EOF
+$USER_NAME ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff, /usr/bin/systemctl reboot
+EOF
+if sudo visudo -cf "$SUDOERS_TMP" >/dev/null; then
+    sudo install -m 0440 -o root -g root "$SUDOERS_TMP" /etc/sudoers.d/roomsync-power
+else
+    echo "Couldn't add the power-off permission; the power button won't work."
+fi
+rm -f "$SUDOERS_TMP"
+
 # ngrok: the public HTTPS link (needed for phone push notifications). Only
 # set up when ngrok is installed and logged in for this user.
 NGROK="$(command -v ngrok || true)"
@@ -160,3 +173,8 @@ echo "        journalctl -u roomsync-ngrok -f  (public link)"
 echo "Show the public link any time:  bash pi/link.sh"
 echo "Restart after a git pull or config.py change:  sudo systemctl restart roomsync roomsync-rfid"
 echo "Leave the full-screen display: Alt+F4"
+if ! grep -q '^SHUTDOWN_PIN' "$APP_DIR/config.py"; then
+    echo
+    echo "To show the touchscreen power button, add a PIN to config.py, e.g.:"
+    echo "  echo 'SHUTDOWN_PIN = \"246810\"' >> $APP_DIR/config.py && sudo systemctl restart roomsync"
+fi

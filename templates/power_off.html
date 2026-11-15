@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}RoomSync - {{ "Restarting" if action == "restart" else "Shutting down" }}{% endblock %}
+
+{% block content %}
+<section class="admin-section">
+    {% if action == "restart" %}
+    <h1>Restarting…</h1>
+    <p class="meta">RoomSync will be back in about a minute.</p>
+    {% else %}
+    <h1>Shutting down…</h1>
+    <p class="meta">Wait until the green light on the Pi stops blinking, then unplug it.</p>
+    {% endif %}
+</section>
+{% endblock %}

@@ -88,6 +88,12 @@ from config import (
     VAPID_PUBLIC_KEY,
 )
 
+import config as _config  # noqa: E402  (optional settings below may be missing on older config.py files)
+
+# PIN for the Shut down / Restart pad on the door display (see /api/power).
+# Optional: a config.py without SHUTDOWN_PIN just hides the power button.
+SHUTDOWN_PIN = str(getattr(_config, "SHUTDOWN_PIN", "") or "").strip()
+
 DB_PATH = "roomsync.db"
 
 app = Flask(__name__)
@@ -971,7 +977,99 @@ def index():
     conn = get_db()
     initial_state = get_display_state(conn)
     conn.close()
-    return render_template("index.html", now=datetime.now(), initial_state=initial_state)
+    return render_template("index.html", now=datetime.now(), initial_state=initial_state,
+                           power_enabled=bool(SHUTDOWN_PIN))
+
+
+# ---------------------------------------------------------------------------
+# Power off / restart from the touchscreen (the deployed Pi has no keyboard).
+# The door display shows a small power button on the WELCOME screen only; it
+# opens a PIN pad, and a correct SHUTDOWN_PIN (config.py) shuts the Pi down
+# cleanly — pulling the plug instead has corrupted this Pi's SD card before.
+# An admin can do the same from the Admin page without a PIN.
+# ---------------------------------------------------------------------------
+
+POWER_COMMANDS = {
+    "shutdown": ["sudo", "-n", "/usr/bin/systemctl", "poweroff"],
+    "restart": ["sudo", "-n", "/usr/bin/systemctl", "reboot"],
+}
+POWER_MAX_TRIES = 5
+POWER_LOCKOUT_MINUTES = 5
+_power_failures = {"count": 0, "locked_until": None}
+_power_lock = threading.Lock()
+
+
+def _is_raspberry_pi():
+    try:
+        with open("/proc/device-tree/model") as f:
+            return "Raspberry Pi" in f.read()
+    except OSError:
+        return False
+
+
+def _run_power_command(action):
+    """Runs the power command a moment from now, so the HTTP response (and
+    the "safe to unplug" screen) gets out first. Only ever on a Raspberry Pi:
+    on a dev laptop it's logged and skipped, so testing can't power it off."""
+    def go():
+        time.sleep(2)
+        if not _is_raspberry_pi():
+            print(f"[power] {action} requested — not a Raspberry Pi, so nothing was done")
+            return
+        try:
+            subprocess.run(POWER_COMMANDS[action], check=True, timeout=30)
+        except Exception as exc:
+            print(f"[power] {action} failed: {type(exc).__name__}: {exc}")
+
+    threading.Thread(target=go, daemon=True).start()
+
+
+@app.route("/api/power", methods=["POST"])
+def api_power():
+    """Shut down or restart the Pi. Needs SHUTDOWN_PIN, or an admin login.
+    The touchscreen can only reach this from the WELCOME screen, and it's
+    refused here too while a class session is running."""
+    data = request.get_json(silent=True) or {}
+    action = data.get("action")
+    if action not in POWER_COMMANDS:
+        return jsonify({"ok": False, "error": "Unknown action."}), 400
+
+    is_admin = session.get("role") == "admin" and session.get("user_id")
+    if not is_admin:
+        if not SHUTDOWN_PIN:
+            return jsonify({"ok": False, "error": "Not available."}), 403
+        with _power_lock:
+            now = datetime.now()
+            locked_until = _power_failures["locked_until"]
+            if locked_until and now < locked_until:
+                wait = math.ceil((locked_until - now).total_seconds() / 60)
+                return jsonify({"ok": False, "error": f"Too many tries. Try again in {wait} min."}), 429
+            if str(data.get("pin", "")) != SHUTDOWN_PIN:
+                _power_failures["count"] += 1
+                if _power_failures["count"] >= POWER_MAX_TRIES:
+                    _power_failures.update(count=0, locked_until=now + timedelta(minutes=POWER_LOCKOUT_MINUTES))
+                    return jsonify({"ok": False, "error": f"Too many tries. Try again in {POWER_LOCKOUT_MINUTES} min."}), 429
+                return jsonify({"ok": False, "error": "Wrong PIN."}), 403
+            _power_failures.update(count=0, locked_until=None)
+
+        with room_state_lock:
+            stage = room_state["stage"]
+        if stage != "welcome":
+            return jsonify({"ok": False, "error": "A class session is running."}), 409
+
+    _run_power_command(action)
+    return jsonify({"ok": True, "action": action})
+
+
+@app.route("/admin/power", methods=["POST"])
+@login_required(role="admin")
+def admin_power():
+    action = request.form.get("action")
+    if action not in POWER_COMMANDS:
+        flash("Unknown action.", "error")
+        return redirect(url_for("admin"))
+    _run_power_command(action)
+    return render_template("power_off.html", action=action)
 
 
 @app.route("/api/display_state")

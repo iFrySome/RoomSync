@@ -38,6 +38,11 @@ SMS_GATEWAY_PORT = "8080"
 
 ROOMSYNC_SERVER_URL = "http://127.0.0.1:5000"
 
+# PIN for the power button on the door display (Shut down / Restart, for a
+# Pi with no keyboard). Leave it out or empty to hide the button. Admins can
+# also shut down from the Admin page without it.
+SHUTDOWN_PIN = ""
+
 FLASK_SECRET_KEY = "change-me"
 VAPID_PRIVATE_KEY = "generate-your-own-with-generate_vapid_keys.py"
 VAPID_PUBLIC_KEY = "generate-your-own-with-generate_vapid_keys.py"

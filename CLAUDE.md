@@ -74,6 +74,7 @@ RoomSync/
 │   ├── admin_classes.html   # Classes table + Add/Assign Class ("/admin/classes")
 │   ├── admin_rooms.html     # Rooms table + Add Room ("/admin/rooms")
 │   ├── admin_class_enroll.html # Enroll students into one class ("/admin/classes/<id>/enroll")
+│   ├── power_off.html       # "Shutting down / Restarting" page after the Admin hub's power buttons
 │   ├── admin_teacher.html   # One teacher's credentials, password reset, classes ("/admin/teachers/<id>")
 │   └── admin_student.html   # One student's credentials/enrollments ("/admin/students/<id>")
 └── static/
@@ -1217,6 +1218,24 @@ query — see point 3 above).
   that link from ngrok's local API. The account's free fixed domain can
   be online from only one machine at a time, so stop the laptop's ngrok
   while the Pi's runs. `.gitattributes` forces LF for `*.sh`.
+- **Shutting down without a keyboard** (the deployed Pi has only the
+  touchscreen and reader; pulling the plug once corrupted its SD card).
+  The door display shows a small power button (bottom-right, **WELCOME
+  stage only**) when `SHUTDOWN_PIN` is set in `config.py`. It's read
+  with `getattr`, so older config files without it still load, and an
+  empty value hides the button. The button opens a touch PIN pad with
+  Shut down / Restart, laid out side by side under 560px tall to fit
+  800×480. It posts to `/api/power` (`api_power()`), which checks the
+  PIN, locks for `POWER_LOCKOUT_MINUTES` after `POWER_MAX_TRIES` wrong
+  tries, refuses while `room_state` isn't `welcome`, then shows a
+  full-screen "safe to unplug" message. Admins get Shut down / Restart
+  on the Admin hub (`admin_power()`, no PIN, renders
+  `power_off.html`). Both call `_run_power_command()`, which runs `sudo
+  -n systemctl poweroff|reboot` 2 s later on a background thread, and
+  **only on a Raspberry Pi** (`/proc/device-tree/model`), so it's a
+  logged no-op on a dev laptop. `pi/setup_autostart.sh` installs
+  `/etc/sudoers.d/roomsync-power` (validated with `visudo -cf`), letting
+  the app user run just those two commands without a password.
 - The display state machine (`room_state` in `app.py`) is a single
   in-memory dict guarded by a lock — it assumes one room/one process, and
   resets to `welcome` if the Flask process restarts. Fine for the current

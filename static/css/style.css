@@ -1429,3 +1429,89 @@ h3 + .form-grid, h2 + .form-grid { margin-top: 4px; }
     .pill { border: 1px solid currentColor; }
 }
 .filter-form .field-full { flex: 1 1 100%; }
+
+/* --- Power button + PIN pad on the door display (index.html) --- */
+
+.power-btn {
+    position: fixed;
+    right: 18px;
+    bottom: 18px;
+    z-index: 40;
+    width: 52px;
+    height: 52px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    border: 1px solid var(--glass-border);
+    background: var(--glass-strong);
+    color: var(--muted);
+    box-shadow: var(--shadow), var(--inner-light);
+    cursor: pointer;
+}
+.power-btn[hidden] { display: none; }
+.power-btn svg { width: 24px; height: 24px; }
+.power-btn:active { transform: scale(0.95); }
+
+.power-modal { width: min(360px, calc(100vw - 32px)); }
+.power-modal .modal-body { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+.power-actions { width: 100%; }
+
+.pin-dots { display: flex; gap: 12px; min-height: 18px; }
+.pin-dot {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid var(--muted);
+}
+.pin-dot.filled { background: var(--text); border-color: var(--text); }
+
+.pin-error { min-height: 1.2em; margin: 0; color: var(--red); font-size: 0.9rem; font-weight: 600; }
+
+.pin-pad {
+    display: grid;
+    grid-template-columns: repeat(3, 72px);
+    gap: 12px;
+}
+.pin-key {
+    height: 64px;
+    border-radius: 50%;
+    border: 1px solid var(--glass-border);
+    background: rgba(255, 255, 255, 0.8);
+    color: var(--text);
+    font: inherit;
+    font-size: 1.5rem;
+    font-weight: 600;
+    cursor: pointer;
+    user-select: none;
+}
+.pin-key:active { background: var(--accent-soft); transform: scale(0.96); }
+.pin-key.pin-ok { background: var(--accent); color: #ffffff; border-color: transparent; font-size: 1.1rem; }
+
+.power-off-screen {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 24px;
+    text-align: center;
+    background: #111111;
+    color: #ffffff;
+}
+.power-off-screen[hidden] { display: none; }
+.power-off-screen p { max-width: 32em; color: rgba(255, 255, 255, 0.75); font-size: 1.1rem; }
+
+.power-side { display: flex; flex-direction: column; align-items: center; gap: 14px; width: 100%; }
+
+/* The Pi's 7" screen (800x480): keypad beside the choices, no scrolling. */
+@media (max-height: 560px) {
+    .power-modal { width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 24px); }
+    .power-modal .modal-header { padding-top: 12px; padding-bottom: 8px; }
+    .power-modal .modal-body { flex-direction: row; justify-content: center; gap: 24px; padding-top: 8px; padding-bottom: 16px; }
+    .power-side { width: 200px; }
+    .pin-pad { grid-template-columns: repeat(3, 64px); gap: 10px; }
+    .pin-key { height: 58px; font-size: 1.35rem; }
+}

@@ -28,4 +28,20 @@
         <span class="hub-link">Manage &rarr;</span>
     </a>
 </div>
+
+<section class="admin-section">
+    <h2>Device</h2>
+    <div class="row-actions">
+        <form method="POST" action="{{ url_for('admin_power') }}"
+              onsubmit='return confirm({{ "Shut down RoomSync? Any class in progress will stop."|tojson }});'>
+            <input type="hidden" name="action" value="shutdown">
+            <button type="submit" class="btn btn-secondary">Shut down</button>
+        </form>
+        <form method="POST" action="{{ url_for('admin_power') }}"
+              onsubmit='return confirm({{ "Restart RoomSync? Any class in progress will stop."|tojson }});'>
+            <input type="hidden" name="action" value="restart">
+            <button type="submit" class="btn btn-secondary">Restart</button>
+        </form>
+    </div>
+</section>
 {% endblock %}

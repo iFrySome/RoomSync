@@ -6,6 +6,45 @@
 
 <div id="display-root" class="display-root"></div>
 
+{% if power_enabled %}
+{# Shut down / Restart for the keyboard-less Pi. Only shown on WELCOME. #}
+<button type="button" class="power-btn" id="power-btn" aria-label="Power" hidden>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
+        <path d="M12 3v9"/><path d="M6.3 6.8a8 8 0 1 0 11.4 0"/>
+    </svg>
+</button>
+
+<dialog class="modal power-modal" id="power-dialog" aria-labelledby="power-title">
+    <div class="modal-header">
+        <h2 id="power-title">Power</h2>
+        <button type="button" class="modal-close" data-close-dialog aria-label="Close">&times;</button>
+    </div>
+    <div class="modal-body">
+        <div class="power-side">
+            <div class="login-tabs power-actions" role="group" aria-label="Action">
+                <button type="button" class="login-tab active" data-power-action="shutdown">Shut down</button>
+                <button type="button" class="login-tab" data-power-action="restart">Restart</button>
+            </div>
+            <div class="pin-dots" id="pin-dots" aria-label="PIN"></div>
+            <p class="pin-error" id="pin-error" role="alert"></p>
+        </div>
+        <div class="pin-pad">
+            {% for key in ["1","2","3","4","5","6","7","8","9","del","0","ok"] %}
+            <button type="button" class="pin-key{% if key == 'ok' %} pin-ok{% endif %}" data-key="{{ key }}"
+                    {%- if key == 'del' %} aria-label="Delete"{% endif %}>
+                {%- if key == 'del' %}&#9003;{% elif key == 'ok' %}OK{% else %}{{ key }}{% endif -%}
+            </button>
+            {% endfor %}
+        </div>
+    </div>
+</dialog>
+
+<div class="power-off-screen" id="power-off-screen" hidden>
+    <h1 id="power-off-title">Shutting down…</h1>
+    <p id="power-off-note">Wait until the green light on the Pi stops blinking, then unplug it.</p>
+</div>
+{% endif %}
+
 <script>
     const INITIAL_STATE = {{ initial_state|tojson }};
     let currentState = INITIAL_STATE;
@@ -269,6 +308,65 @@
                 render();
             })
             .catch(() => {});
+    }
+
+    // Power button (only rendered when SHUTDOWN_PIN is set in config.py):
+    // visible on the WELCOME screen only, so it can never interrupt a class.
+    const powerBtn = document.getElementById("power-btn");
+    if (powerBtn) {
+        const dialog = document.getElementById("power-dialog");
+        const dots = document.getElementById("pin-dots");
+        const error = document.getElementById("pin-error");
+        let pin = "";
+        let action = "shutdown";
+
+        const drawDots = () => {
+            dots.innerHTML = Array.from({ length: Math.max(pin.length, 4) },
+                (_, i) => `<span class="pin-dot${i < pin.length ? " filled" : ""}"></span>`).join("");
+        };
+        const reset = () => { pin = ""; error.textContent = ""; drawDots(); };
+
+        const showPowerBtn = () => { powerBtn.hidden = currentState.stage !== "welcome"; };
+        const baseRender = render;
+        render = function () { baseRender(); showPowerBtn(); };
+
+        powerBtn.addEventListener("click", () => { reset(); dialog.showModal(); });
+        dialog.addEventListener("close", reset);
+
+        dialog.querySelectorAll("[data-power-action]").forEach((btn) => {
+            btn.addEventListener("click", () => {
+                action = btn.dataset.powerAction;
+                dialog.querySelectorAll("[data-power-action]").forEach((b) => b.classList.toggle("active", b === btn));
+            });
+        });
+
+        dialog.querySelectorAll(".pin-key").forEach((key) => {
+            key.addEventListener("click", () => {
+                const k = key.dataset.key;
+                error.textContent = "";
+                if (k === "del") { pin = pin.slice(0, -1); drawDots(); return; }
+                if (k !== "ok") { if (pin.length < 12) pin += k; drawDots(); return; }
+                if (!pin) return;
+                fetch("/api/power", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ action, pin }),
+                })
+                    .then((r) => r.json())
+                    .then((data) => {
+                        if (!data.ok) { pin = ""; drawDots(); error.textContent = data.error || "Try again."; return; }
+                        dialog.close();
+                        const screen = document.getElementById("power-off-screen");
+                        if (action === "restart") {
+                            document.getElementById("power-off-title").textContent = "Restarting…";
+                            document.getElementById("power-off-note").textContent = "RoomSync will be back in about a minute.";
+                        }
+                        screen.hidden = false;
+                    })
+                    .catch(() => { error.textContent = "Couldn't reach RoomSync."; });
+            });
+        });
+        drawDots();
     }
 
     render();
